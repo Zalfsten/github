@@ -27,7 +27,7 @@ jobs:
       pull-requests: read
     
     outputs:
-      version: ${{ steps.gitversion.outputs.semVer }}
+      version: ${{ steps.gitversion.outputs.majorMinorPatch }}
       
     steps:
       - name: Checkout code
@@ -88,17 +88,18 @@ jobs:
       - name: Display GitVersion outputs
         run: |
           echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
-          echo "AssemblySemVer: ${{ steps.gitversion.outputs.assemblySemVer }}"
           echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
           echo "Major: ${{ steps.gitversion.outputs.major }}"
           echo "Minor: ${{ steps.gitversion.outputs.minor }}"
           echo "Patch: ${{ steps.gitversion.outputs.patch }}"
+          echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
+          echo "Will use for release: v${{ steps.gitversion.outputs.majorMinorPatch }}"
           
       - name: Create and push tag
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = `v${{ steps.gitversion.outputs.semVer }}`;
+            const tag = `v${{ steps.gitversion.outputs.majorMinorPatch }}`;
             const sha = context.sha;
             
             try {
