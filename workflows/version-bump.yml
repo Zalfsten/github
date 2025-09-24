@@ -1,0 +1,125 @@
+name: Version Bump and Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version type (major, minor, patch)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+jobs:
+  version-bump:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.gitversion.outputs.semVer }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v0
+        with:
+          versionSpec: '6.x'
+          
+      - name: Determine version increment
+        id: version_increment
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "increment=${{ github.event.inputs.version_type }}" >> $GITHUB_OUTPUT
+          else
+            # Check PR labels for version increment
+            if ${{ contains(github.event.pull_request.labels.*.name, 'major version') }}; then
+              echo "increment=major" >> $GITHUB_OUTPUT
+            elif ${{ contains(github.event.pull_request.labels.*.name, 'minor version') }}; then
+              echo "increment=minor" >> $GITHUB_OUTPUT
+            elif ${{ contains(github.event.pull_request.labels.*.name, 'patch version') }}; then
+              echo "increment=patch" >> $GITHUB_OUTPUT
+            else
+              echo "increment=patch" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+      - name: Create GitVersion.yml configuration
+        run: |
+          cat > GitVersion.yml << EOF
+          workflow: GitHub/v1
+          branches:
+            main:
+              tag: ''
+              increment: ${{ steps.version_increment.outputs.increment }}
+              prevent-increment:
+                of-merged-branch: true
+              track-merge-target: false
+              source-branches: ['feature']
+            feature:
+              regex: ^feature[/-]
+              increment: Inherit
+              source-branches: ['main']
+              track-merge-target: false
+          ignore:
+            sha: []
+          EOF
+          
+      - name: Execute GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v0
+        
+      - name: Display GitVersion outputs
+        run: |
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "AssemblySemVer: ${{ steps.gitversion.outputs.assemblySemVer }}"
+          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "Major: ${{ steps.gitversion.outputs.major }}"
+          echo "Minor: ${{ steps.gitversion.outputs.minor }}"
+          echo "Patch: ${{ steps.gitversion.outputs.patch }}"
+          
+      - name: Create and push tag
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.gitversion.outputs.semVer }}"
+          git push origin "v${{ steps.gitversion.outputs.semVer }}"
+          
+  create-release:
+    needs: version-bump
+    runs-on: ubuntu-latest
+    if: needs.version-bump.outputs.version != ''
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ needs.version-bump.outputs.version }}
+          release_name: Release v${{ needs.version-bump.outputs.version }}
+          body: |
+            ## Changes in this release
+            
+            ${{ github.event.pull_request.title || 'Manual release' }}
+            
+            ### Pull Request
+            ${{ github.event.pull_request.html_url || 'Manual trigger' }}
+            
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.version-bump.outputs.version }}...HEAD
+          draft: false
+          prerelease: false
