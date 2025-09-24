@@ -1,4 +1,4 @@
-workflow: GitHub/v1
+workflow: GitHubFlow/v1
 next-version: 1.0.0
 branches:
   main:
