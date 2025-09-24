@@ -65,16 +65,15 @@ jobs:
           next-version: 1.0.0
           branches:
             main:
-              mode: ContinuousDelivery
               increment: ${{ steps.version_increment.outputs.increment }}
               prevent-increment:
-                of-merged-branch: true
+                of-merged-branch: false
               track-merge-target: false
               source-branches: ['feature']
+              label: ''
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: "{BranchName}"
-              mode: ContinuousDeployment
               increment: Inherit
               source-branches: ['main']
               track-merge-target: false
@@ -132,12 +131,10 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version-bump.outputs.version }}
-          release_name: Release v${{ needs.version-bump.outputs.version }}
+          name: Release v${{ needs.version-bump.outputs.version }}
           body: |
             ## Changes in this release
             
