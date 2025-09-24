@@ -1,7 +1,7 @@
-workflow: GitHubFlow/v1
 next-version: 1.0.0
 branches:
   main:
+    mode: ContinuousDelivery
     increment: Patch
     prevent-increment:
       of-merged-branch: true
@@ -10,6 +10,7 @@ branches:
   feature:
     regex: ^feature/(?<BranchName>.+)$
     label: "{BranchName}"
+    mode: ContinuousDeployment
     increment: Inherit
     source-branches: ['main']
     track-merge-target: false
