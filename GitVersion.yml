@@ -2,14 +2,14 @@ workflow: GitHubFlow/v1
 next-version: 1.0.0
 branches:
   main:
-    tag: ''
     increment: Patch
     prevent-increment:
       of-merged-branch: true
     track-merge-target: false
     source-branches: ['feature']
   feature:
-    regex: ^feature[/-]
+    regex: ^feature/(?<BranchName>.+)$
+    label: "{BranchName}"
     increment: Inherit
     source-branches: ['main']
     track-merge-target: false
