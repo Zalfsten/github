@@ -61,7 +61,6 @@ jobs:
           workflow: GitHubFlow/v1
           branches:
             main:
-              tag: ''
               increment: ${{ steps.version_increment.outputs.increment }}
               prevent-increment:
                 of-merged-branch: true
