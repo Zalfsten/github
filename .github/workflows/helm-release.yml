@@ -111,7 +111,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
-          name: "Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}"
+          name: "chart-v${{ steps.create_tag.outputs.chart-version }}"
           body: |
             ## Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}
             
@@ -126,6 +126,8 @@ jobs:
           files: ${{ env.IMAGE_NAME }}-${{ steps.create_tag.outputs.chart-version }}.tgz
           draft: true
           make_latest: true
+          generate_release_notes: true
+          append_body: true
           
       - name: Finalize Release
         if: steps.configure.outputs.release-type == 'final'
