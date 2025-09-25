@@ -61,11 +61,31 @@ jobs:
           
       - name: Create GitVersion.yml configuration
         run: |
+          # Bestimme die nächste Version basierend auf dem letzten Tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LAST_VERSION=${LAST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+          
+          case "${{ steps.version_increment.outputs.increment }}" in
+            major)
+              NEXT_VERSION="$((MAJOR + 1)).0.0"
+              ;;
+            minor)
+              NEXT_VERSION="$MAJOR.$((MINOR + 1)).0"
+              ;;
+            patch)
+              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+              ;;
+          esac
+          
+          echo "Last tag: $LAST_TAG"
+          echo "Next version will be: $NEXT_VERSION"
+          
           cat > GitVersion.yml << EOF
-          next-version: 1.0.0
+          next-version: $NEXT_VERSION
           branches:
             main:
-              increment: ${{ steps.version_increment.outputs.increment }}
+              increment: None
               prevent-increment:
                 of-merged-branch: false
               track-merge-target: false
