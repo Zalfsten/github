@@ -50,18 +50,18 @@ jobs:
             fi
           fi
           
-      - name: Create GitVersion.yml configuration
+      - name: Create simple GitVersion configuration
         run: |
-          # Bestimme die nächste Version basierend auf dem letzten Tag
+          # Bestimme die nächste Version basierend auf dem letzten Tag und increment type
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           LAST_VERSION=${LAST_TAG#v}
           
           echo "Last tag: $LAST_TAG"
           echo "Last version: $LAST_VERSION"
           echo "Current branch: ${{ github.ref_name }}"
-          echo "Event name: ${{ github.event_name }}"
+          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
           
-          # Parse version parts with proper error handling
+          # Parse version parts
           if [[ "$LAST_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR=${BASH_REMATCH[1]}
             MINOR=${BASH_REMATCH[2]}
@@ -73,11 +73,7 @@ jobs:
             PATCH=0
           fi
           
-          echo "Parsed - Major: $MAJOR, Minor: $MINOR, Patch: $PATCH"
-          
-          # Berechne nächste Version basierend auf increment type
-          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
-          
+          # Berechne next-version basierend auf increment type
           case "${{ steps.version_increment.outputs.increment }}" in
             major)
               NEXT_VERSION="$((MAJOR + 1)).0.0"
@@ -89,69 +85,23 @@ jobs:
               NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
               ;;
             *)
-              echo "Unknown increment type, defaulting to patch"
               NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
               ;;
           esac
           
           echo "Next version will be: $NEXT_VERSION"
           
-          # Unterscheide zwischen PR-Merge und Manual auf Feature-Branch
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.ref_name }}" == feature/* ]]; then
-            # Manual trigger auf Feature-Branch - immer nächste Patch-Version als Basis
-            echo "Manual trigger on feature branch detected"
-            BRANCH_NAME="${{ github.ref_name }}"
-            FEATURE_NAME=${BRANCH_NAME#feature/}
-            
-            # Für Feature-Branch: immer nächste Patch-Version als Basis
-            NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-            
-            echo "Feature name: $FEATURE_NAME"
-            echo "Base version for feature: $NEXT_VERSION"
-            
-            cat > GitVersion.yml << EOF
+          # Erstelle einfache GitVersion.yml - lass GitVersion die Logik machen
+          cat > GitVersion.yml << EOF
           next-version: $NEXT_VERSION
           branches:
             main:
-              increment: None
-              prevent-increment:
-                of-merged-branch: false
-              track-merge-target: false
-              source-branches: ['feature']
               label: ''
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: "{BranchName}"
-              increment: Patch
               source-branches: ['main']
-              track-merge-target: false
-          ignore:
-            sha: []
           EOF
-          else
-            # PR-Merge auf main oder Manual auf main
-            echo "PR merge or main branch trigger detected"
-            
-            cat > GitVersion.yml << EOF
-          next-version: $NEXT_VERSION
-          branches:
-            main:
-              increment: None
-              prevent-increment:
-                of-merged-branch: false
-              track-merge-target: false
-              source-branches: ['feature']
-              label: ''
-            feature:
-              regex: ^feature/(?<BranchName>.+)$
-              label: "{BranchName}"
-              increment: Inherit
-              source-branches: ['main']
-              track-merge-target: false
-          ignore:
-            sha: []
-          EOF
-          fi
           
           echo "Generated GitVersion.yml:"
           cat GitVersion.yml
@@ -182,7 +132,7 @@ jobs:
             echo "Using majorMinorPatch for main branch: $VERSION"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Will use for release: v$VERSION"
+          echo "Final version: v$VERSION"
           
       - name: Create and push tag
         uses: actions/github-script@v7
