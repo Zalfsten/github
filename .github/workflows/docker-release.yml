@@ -40,7 +40,6 @@ jobs:
           versionSpec: '6.x'
           
       - name: Configure GitVersion and calculate version
-        id: gitversion
         run: |
           # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
@@ -70,7 +69,10 @@ jobs:
           echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
           
       - name: Execute GitVersion
+        id: gitversion
         uses: gittools/actions/gitversion/execute@v4
+        with:
+          versionSpec: 6.4.x
         
       - name: Set final version
         id: set_version
@@ -136,7 +138,7 @@ jobs:
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.created=${{ fromJSON(github.event.repository.pushed_at) || github.event.repository.updated_at }}
             org.opencontainers.image.revision=${{ github.sha }}
             
       - name: Build Docker image
@@ -179,7 +181,6 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-  create-release:
   create-release:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
