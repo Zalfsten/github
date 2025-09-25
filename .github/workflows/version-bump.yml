@@ -64,7 +64,24 @@ jobs:
           # Bestimme die nächste Version basierend auf dem letzten Tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           LAST_VERSION=${LAST_TAG#v}
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+          
+          echo "Last tag: $LAST_TAG"
+          echo "Last version: $LAST_VERSION"
+          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
+          
+          # Parse version parts with proper error handling
+          if [[ "$LAST_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+          else
+            echo "Invalid version format: $LAST_VERSION, using 0.0.0"
+            MAJOR=0
+            MINOR=0
+            PATCH=0
+          fi
+          
+          echo "Parsed - Major: $MAJOR, Minor: $MINOR, Patch: $PATCH"
           
           case "${{ steps.version_increment.outputs.increment }}" in
             major)
@@ -76,9 +93,12 @@ jobs:
             patch)
               NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
               ;;
+            *)
+              echo "Unknown increment type, defaulting to patch"
+              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+              ;;
           esac
           
-          echo "Last tag: $LAST_TAG"
           echo "Next version will be: $NEXT_VERSION"
           
           cat > GitVersion.yml << EOF
@@ -100,6 +120,9 @@ jobs:
           ignore:
             sha: []
           EOF
+          
+          echo "Generated GitVersion.yml:"
+          cat GitVersion.yml
           
       - name: Execute GitVersion
         id: gitversion
