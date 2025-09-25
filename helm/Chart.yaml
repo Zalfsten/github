@@ -1,18 +1,18 @@
 apiVersion: v2
-name: dummy-app
-description: A Helm chart for dummy application deployment
+name: fairagro-advanced-middleware-api
+description: A Helm chart for FairAgro Advanced Middleware API deployment
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
 
 keywords:
-  - dummy
-  - demo
-  - nodejs
+  - fairagro
+  - middleware
+  - api
 
 maintainers:
-  - name: DevOps Team
-    email: devops@example.com
+  - name: FairAgro Team
+    email: github_pipeline@fairagro.net
 
 sources:
   - https://github.com/Zalfsten/github
