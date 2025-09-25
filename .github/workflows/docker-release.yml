@@ -1,0 +1,366 @@
+name: Create Docker Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type for docker release'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - major
+        - minor  
+        - patch
+
+env:
+  GIT_USER_NAME: GitHub Pipeline
+  GIT_USER_EMAIL: github_pipeline@fairagro.net
+  IMAGE_NAME: fairagro_advanced_middleware_api
+  DOCKERHUB_NAMESPACE: zalf
+  IMAGE_TITLE: FairAgro Advanced Middleware API
+  IMAGE_DESCRIPTION: Advanced middleware API for FairAgro platform
+
+jobs:
+  calculate-version:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      pull-requests: read
+    
+    outputs:
+      version: ${{ steps.determine_output_version.outputs.version }}
+      release-type: ${{ steps.determine_output_version.outputs.release-type }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: '6.x'
+          
+      - name: Determine version increment
+        id: version_increment
+        run: |
+          if [[ "${{ github.ref_name }}" == feature/* ]]; then
+            # Feature branch: always patch increment on base version
+            echo "increment=patch" >> $GITHUB_OUTPUT
+            echo "release_type=feature" >> $GITHUB_OUTPUT
+            echo "🌿 Feature release - patch increment"
+          else
+            # Main branch: use user input for final release
+            echo "increment=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+            echo "release_type=final" >> $GITHUB_OUTPUT
+            echo "🚀 Final release - ${{ github.event.inputs.version_bump }} increment"
+          fi
+          
+      - name: Create GitVersion configuration
+        run: |
+          echo "Current branch: ${{ github.ref_name }}"
+          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
+          
+          # Erstelle GitVersion.yml für GitVersion 6.4+ mit globalem ContinuousDeployment
+          cat > GitVersion.yml << EOF
+          tag-prefix: v
+          mode: ContinuousDeployment
+          branches:
+            main:
+              label: ''
+              increment: ${{ steps.version_increment.outputs.increment }}
+            feature:
+              regex: ^feature/(?<BranchName>.+)$
+              label: '{BranchName}'
+              increment: Inherit
+          EOF
+          
+          echo "Generated GitVersion.yml:"
+          cat GitVersion.yml
+          
+      - name: Execute GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4
+        
+      - name: Display GitVersion outputs
+        run: |
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "Major: ${{ steps.gitversion.outputs.major }}"
+          echo "Minor: ${{ steps.gitversion.outputs.minor }}"
+          echo "Patch: ${{ steps.gitversion.outputs.patch }}"
+          echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
+          
+      - name: Determine output version
+        id: determine_output_version
+        run: |
+          if [[ "${{ github.ref_name }}" == feature/* ]]; then
+            # Feature branch: use semVer for pre-release tags like v1.0.1-foo.1
+            VERSION="${{ steps.gitversion.outputs.semVer }}"
+            RELEASE_TYPE="feature"
+            echo "Using semVer for feature branch: $VERSION"
+          else
+            # Main branch: use majorMinorPatch for clean final releases like v1.0.0
+            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            RELEASE_TYPE="final"
+            echo "Using majorMinorPatch for main branch: $VERSION"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+          echo "Final version: v$VERSION (type: $RELEASE_TYPE)"
+
+  build-docker-image:
+    needs: [calculate-version]
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.build.outputs.tags }}
+      dockerhub-pushed: ${{ steps.dockerhub_secrets.outputs.available }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Check DockerHub secrets
+        id: dockerhub_secrets
+        run: |
+          if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
+            echo "available=true" >> $GITHUB_OUTPUT
+            echo "✅ DockerHub secrets are available"
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ DockerHub secrets not available - will only push to GitHub Container Registry"
+          fi
+
+      - name: Log in to DockerHub
+        if: steps.dockerhub_secrets.outputs.available == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || format('local/{0}', env.IMAGE_NAME) }}
+          tags: |
+            type=raw,value=${{ needs.calculate-version.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.calculate-version.outputs.release-type == 'final' }}
+          labels: |
+            org.opencontainers.image.title=${{ env.IMAGE_TITLE }}
+            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ steps.dockerhub_secrets.outputs.available == 'true' }}
+          load: true
+          tags: |
+            local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && needs.calculate-version.outputs.release-type == 'final' && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          output-file: sbom.spdx.json
+          format: spdx-json
+          
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: Create image summary
+        run: |
+          echo "## 🐳 Docker Image Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.dockerhub_secrets.outputs.available }}" == "true" ]]; then
+            echo "### ✅ Docker Image Built and Pushed to DockerHub" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **DockerHub**: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tag**: ${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Digest**: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Platform**: linux/amd64" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ⚠️ Docker Image Built Locally (Not Pushed)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The Docker image was built successfully but **not pushed** to DockerHub because the required secrets are missing." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Local Tag**: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Platform**: linux/amd64 (local build)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Security Scan**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**To enable DockerHub push, configure these secrets:**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`DOCKERHUB_USER\`: Your DockerHub username" >> $GITHUB_STEP_SUMMARY
+            echo "- \`DOCKERHUB_TOKEN\`: Your DockerHub access token" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  create-tag-and-release:
+    needs: [calculate-version, build-docker-image]
+    runs-on: ubuntu-latest
+    if: needs.build-docker-image.result == 'success'
+    
+    permissions:
+      contents: write
+      pull-requests: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Create and push tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = `v${{ needs.calculate-version.outputs.version }}`;
+            const sha = context.sha;
+            
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${tag}`,
+                sha: sha
+              });
+              console.log(`✅ Tag ${tag} created successfully`);
+            } catch (error) {
+              if (error.status === 422) {
+                console.log(`⚠️ Tag ${tag} already exists`);
+              } else {
+                throw error;
+              }
+            }
+          
+      - name: Create GitHub Release
+        if: needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.calculate-version.outputs.version }}
+          name: Release v${{ needs.calculate-version.outputs.version }}
+          body: |
+            ## Software Release v${{ needs.calculate-version.outputs.version }}
+            
+            This is a **${{ needs.calculate-version.outputs.release-type }}** release triggered manually.
+            
+            ### Version Increment
+            - **Type**: ${{ github.event.inputs.version_bump || 'patch (feature)' }}
+            - **Branch**: ${{ github.ref_name }}
+            
+            ## 🐳 Docker Image
+            
+            The Docker image for this release was built successfully.
+            
+            ${{ secrets.DOCKERHUB_USER && format('```bash
+            docker pull {0}/{1}:{2}
+            ```', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '**Note**: Docker image was built locally but not pushed to DockerHub (missing secrets).' }}
+            
+            ### Image Details
+            ${{ secrets.DOCKERHUB_USER && format('- **DockerHub**: `{0}/{1}`', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '- **DockerHub**: Not configured (missing secrets)' }}
+            - **Tag**: `${{ needs.calculate-version.outputs.version }}`
+            ${{ needs.build-docker-image.outputs.image-digest && format('- **Digest**: `{0}`', needs.build-docker-image.outputs.image-digest) || '' }}
+            - **Platforms**: linux/amd64
+            
+            ### Security
+            - ✅ Image scanned with Trivy
+            - ✅ SBOM (Software Bill of Materials) generated
+            - ✅ Single-platform build for performance
+            - ✅ Security-focused base image
+            
+            ### Helm Deployment
+            ${{ secrets.DOCKERHUB_USER && format('```bash
+            helm upgrade --install fairagro-middleware ./helm \
+              --set image.tag={0} \
+              --set image.repository={1}/{2}
+            ```', needs.calculate-version.outputs.version, env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '**Note**: Configure DockerHub secrets to enable Helm deployment with DockerHub images.' }}
+            
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.calculate-version.outputs.version }}...HEAD
+          draft: false
+          prerelease: ${{ needs.calculate-version.outputs.release-type == 'feature' }}
+
+  update-helm-chart:
+    needs: [calculate-version, build-docker-image, create-tag-and-release]
+    runs-on: ubuntu-latest
+    if: needs.create-tag-and-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed == 'true'
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Update Helm Chart appVersion
+        run: |
+          # Update appVersion in Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${{ needs.calculate-version.outputs.version }}\"/" helm/Chart.yaml
+          
+          # Show the changes
+          echo "Updated Chart.yaml:"
+          cat helm/Chart.yaml
+          
+      - name: Commit Helm chart changes
+        run: |
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
+          
+          if git diff --quiet helm/Chart.yaml; then
+            echo "No changes to commit"
+          else
+            git add helm/Chart.yaml
+            git commit -m "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}
+
+            Automatically updated Helm chart appVersion after software release v${{ needs.calculate-version.outputs.version }}"
+            git push
+            echo "✅ Helm chart appVersion updated to ${{ needs.calculate-version.outputs.version }}"
+          fi
