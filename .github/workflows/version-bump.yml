@@ -50,16 +50,24 @@ jobs:
             fi
           fi
           
-      - name: Create simple GitVersion configuration
+      - name: Create GitVersion configuration with regex tag filtering
         run: |
-          # Bestimme die nächste Version basierend auf dem letzten Tag und increment type
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          LAST_VERSION=${LAST_TAG#v}
-          
-          echo "Last tag: $LAST_TAG"
-          echo "Last version: $LAST_VERSION"
           echo "Current branch: ${{ github.ref_name }}"
           echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
+          
+          # Lass GitVersion die letzte finale Release automatisch finden
+          # Der regex tag-prefix filtert Pre-Release-Tags automatisch raus
+          
+          # Bestimme next-version basierend auf increment type und letzter finaler Release
+          # GitVersion wird automatisch die höchste finale Release als Basis nehmen
+          LAST_FINAL_TAG=$(git tag -l "v*" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
+          
+          if [ -z "$LAST_FINAL_TAG" ]; then
+            LAST_FINAL_TAG="v0.0.0"
+          fi
+          
+          LAST_VERSION=${LAST_FINAL_TAG#v}
+          echo "Last final release: $LAST_FINAL_TAG ($LAST_VERSION)"
           
           # Parse version parts
           if [[ "$LAST_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
@@ -67,7 +75,7 @@ jobs:
             MINOR=${BASH_REMATCH[2]}
             PATCH=${BASH_REMATCH[3]}
           else
-            echo "Invalid version format: $LAST_VERSION, using 0.0.0"
+            echo "Invalid version format, using 0.0.0"
             MAJOR=0
             MINOR=0
             PATCH=0
@@ -91,9 +99,14 @@ jobs:
           
           echo "Next version will be: $NEXT_VERSION"
           
-          # Erstelle einfache GitVersion.yml - lass GitVersion die Logik machen
+          # Erstelle GitVersion.yml mit regex tag-prefix für finale Releases
           cat > GitVersion.yml << EOF
           next-version: $NEXT_VERSION
+          tag-prefix: ^v[0-9]+\.[0-9]+\.[0-9]+$
+          semantic-version-format: Strict
+          strategies:
+            - ConfiguredNextVersion
+            - TaggedCommit
           branches:
             main:
               label: ''
