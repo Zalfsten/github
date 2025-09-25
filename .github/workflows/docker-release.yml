@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type for docker release'
-        required: true
+        description: 'Version bump type for final release'
+        required: false
         default: 'patch'
         type: choice
         options:
@@ -54,10 +54,11 @@ jobs:
             echo "release_type=feature" >> $GITHUB_OUTPUT
             echo "🌿 Feature release - patch increment"
           else
-            # Main branch: use user input for final release
-            echo "increment=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+            # Main branch: use user input for final release (default to patch if empty)
+            VERSION_BUMP="${{ github.event.inputs.version_bump || 'patch' }}"
+            echo "increment=$VERSION_BUMP" >> $GITHUB_OUTPUT
             echo "release_type=final" >> $GITHUB_OUTPUT
-            echo "🚀 Final release - ${{ github.event.inputs.version_bump }} increment"
+            echo "🚀 Final release - $VERSION_BUMP increment"
           fi
           
       - name: Create GitVersion configuration
