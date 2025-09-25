@@ -99,6 +99,11 @@ jobs:
           # Package Helm chart
           helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"
           
+          # Find the actual chart package name (helm package creates name based on Chart.yaml)
+          CHART_PACKAGE=$(ls *.tgz | head -1)
+          echo "chart-package=$CHART_PACKAGE" >> $GITHUB_OUTPUT
+          echo "📦 Created Helm chart package: $CHART_PACKAGE"
+          
           # Only create GitHub release for final releases (main branch)
           if [[ "$RELEASE_TYPE" == "final" ]]; then
             echo "Creating GitHub release for final Helm release"
@@ -124,7 +129,7 @@ jobs:
               --set image.tag=${{ steps.create_tag.outputs.app-version }} \
               --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
             ```
-          files: ${{ env.IMAGE_NAME }}-${{ steps.create_tag.outputs.chart-version }}.tgz
+          files: ${{ steps.create_tag.outputs.chart-package }}
           draft: true
           make_latest: true
           generate_release_notes: true
