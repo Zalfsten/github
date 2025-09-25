@@ -35,6 +35,7 @@ jobs:
           versionSpec: '6.x'
           
       - name: Configure GitVersion and calculate version
+        id: configure
         run: |
           # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then

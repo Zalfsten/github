@@ -28,7 +28,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.set_version.outputs.version }}
-      release-type: ${{ steps.gitversion.outputs.release-type }}
+      release-type: ${{ steps.configure.outputs.release-type }}
       
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,11 @@ jobs:
           versionSpec: 6.4.x
           
       - name: Configure GitVersion and calculate version
+        id: configure
         run: |
+          # Debug branch detection
+          echo "Current branch: ${{ github.ref_name }}"
+          
           # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
             INCREMENT="patch"
@@ -51,6 +55,8 @@ jobs:
             RELEASE_TYPE="final"
             echo "🚀 Final release - $INCREMENT increment"
           fi
+          
+          echo "Determined RELEASE_TYPE: $RELEASE_TYPE"
           
           # Create GitVersion config
           cat > GitVersion.yml << EOF
@@ -67,6 +73,7 @@ jobs:
               increment: Inherit
           EOF
           
+          echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
           echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
           
       - name: Execute GitVersion
