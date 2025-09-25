@@ -50,57 +50,23 @@ jobs:
             fi
           fi
           
-      - name: Create simple GitVersion configuration
+      - name: Create GitVersion configuration
         run: |
-          # Bestimme die nächste Version basierend auf dem letzten Tag und increment type
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          LAST_VERSION=${LAST_TAG#v}
-          
-          echo "Last tag: $LAST_TAG"
-          echo "Last version: $LAST_VERSION"
           echo "Current branch: ${{ github.ref_name }}"
           echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
           
-          # Parse version parts
-          if [[ "$LAST_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            MAJOR=${BASH_REMATCH[1]}
-            MINOR=${BASH_REMATCH[2]}
-            PATCH=${BASH_REMATCH[3]}
-          else
-            echo "Invalid version format: $LAST_VERSION, using 0.0.0"
-            MAJOR=0
-            MINOR=0
-            PATCH=0
-          fi
-          
-          # Berechne next-version basierend auf increment type
-          case "${{ steps.version_increment.outputs.increment }}" in
-            major)
-              NEXT_VERSION="$((MAJOR + 1)).0.0"
-              ;;
-            minor)
-              NEXT_VERSION="$MAJOR.$((MINOR + 1)).0"
-              ;;
-            patch)
-              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-              ;;
-            *)
-              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-              ;;
-          esac
-          
-          echo "Next version will be: $NEXT_VERSION"
-          
-          # Erstelle einfache GitVersion.yml - lass GitVersion die Logik machen
+          # Erstelle GitVersion.yml für GitVersion 6.4+ mit globalem ContinuousDeployment
           cat > GitVersion.yml << EOF
-          next-version: $NEXT_VERSION
+          tag-prefix: v
+          mode: ContinuousDeployment
           branches:
             main:
               label: ''
+              increment: ${{ steps.version_increment.outputs.increment }}
             feature:
               regex: ^feature/(?<BranchName>.+)$
-              label: "{BranchName}"
-              source-branches: ['main']
+              label: '{BranchName}'
+              increment: Inherit
           EOF
           
           echo "Generated GitVersion.yml:"
