@@ -284,9 +284,9 @@ jobs:
           echo "🎉 Release finalized successfully"
 
   update-helm-chart:
-    needs: [calculate-version, build-docker-image, create-release]
+    needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
-    if: needs.create-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed
+    if: needs.build-docker-image.outputs.dockerhub-pushed
     
     permissions:
       contents: write
