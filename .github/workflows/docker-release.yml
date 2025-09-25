@@ -165,13 +165,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           
-      - uses: anchore/sbom-action@v0
+      - name: Generate SBOM (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: anchore/sbom-action@v0
         with:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
           
-      - uses: actions/upload-artifact@v4
+      - name: Upload SBOM artifact (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: actions/upload-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           path: sbom.spdx.json
@@ -200,7 +204,9 @@ jobs:
         with:
           fetch-depth: 0
           
-      - uses: actions/download-artifact@v4
+      - name: Download SBOM artifact (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: actions/download-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           
