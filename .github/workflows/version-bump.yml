@@ -55,20 +55,20 @@ jobs:
           echo "Current branch: ${{ github.ref_name }}"
           echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
           
-          # Erstelle GitVersion.yml ohne komplexe Filtermechanismen
+          # Erstelle GitVersion.yml für GitVersion 6.4+
           cat > GitVersion.yml << EOF
           tag-prefix: v
           branches:
             main:
               mode: ContinuousDelivery
-              tag: ''
+              label: ''
               increment: ${{ steps.version_increment.outputs.increment }}
               source-branches: ['feature']
               is-mainline: true
             feature:
               regex: ^feature/(?<BranchName>.+)$
               mode: ContinuousDeployment
-              tag: '{BranchName}'
+              label: '{BranchName}'
               increment: Inherit
               source-branches: ['main']
               is-mainline: false
