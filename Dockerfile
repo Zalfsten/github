@@ -15,7 +15,13 @@ COPY . .
 # Production stage
 FROM node:18-alpine AS production
 
+# Build argument for app version
+ARG APP_VERSION=development
+
 WORKDIR /app
+
+# Install curl for health checks
+RUN apk add --no-cache curl
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -30,6 +36,9 @@ RUN if [ ! -f package.json ]; then \
     echo 'const express = require("express"); const app = express(); app.get("/", (req, res) => res.json({message: "Hello World", version: process.env.APP_VERSION || "unknown"})); app.get("/health", (req, res) => res.json({status: "healthy"})); app.listen(3000, () => console.log("Server running on port 3000"));' > server.js && \
     npm install express; \
     fi
+
+# Set version environment variable
+ENV APP_VERSION=${APP_VERSION}
 
 # Switch to non-root user
 USER nodejs
