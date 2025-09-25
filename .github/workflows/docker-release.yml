@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type for final release'
+        description: 'Version bump type (only used for main branch releases)'
         required: false
         default: 'patch'
         type: choice
