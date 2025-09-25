@@ -50,8 +50,7 @@ jobs:
           # Create GitVersion config
           cat > GitVersion.yml << EOF
           mode: ContinuousDeployment
-          tag-prefix: ''
-          tag-pattern: '^(?<timestamp>\d{14})-chart-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$'
+          tag-prefix: '.*-chart-v'
           semantic-version-format: Strict
           branches:
             main:
@@ -88,7 +87,7 @@ jobs:
           RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
-          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Tag exists"
+          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Release tag exists"
           
           # Package Helm chart
           helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"

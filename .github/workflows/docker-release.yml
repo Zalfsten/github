@@ -55,21 +55,16 @@ jobs:
           # Create GitVersion config
           cat > GitVersion.yml << EOF
           mode: ContinuousDeployment
-          tag-prefix: ''
-          tag-pattern: '^(?<timestamp>\d{14})-docker-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$'
+          tag-prefix: '.*-docker-v'
           semantic-version-format: Strict
           branches:
             main:
               label: ''
               increment: $INCREMENT
-              regex: ^master$|^main$
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: '{BranchName}'
               increment: Inherit
-          ignore:
-            sha: []
-            commits-before: 2000-01-01T00:00:00
           EOF
           
           echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
