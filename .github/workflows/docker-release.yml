@@ -311,13 +311,14 @@ jobs:
         with:
           fetch-depth: 0
           
-      - name: Update and commit Chart.yaml
+      - name: Update Chart.yaml appVersion
         run: |
           sed -i "s/^appVersion:.*/appVersion: \"${{ needs.calculate-version.outputs.version }}\"/" helm/Chart.yaml
           
-          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
-          git config --local user.name "${{ env.GIT_USER_NAME }}"
-          
-          git add helm/Chart.yaml
-          git diff --staged --quiet || git commit -m "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}"
-          git push
+      - name: Commit and push Chart.yaml changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}"
+          file_pattern: "helm/Chart.yaml"
+          commit_user_name: "${{ env.GIT_USER_NAME }}"
+          commit_user_email: "${{ env.GIT_USER_EMAIL }}"
