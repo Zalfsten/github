@@ -55,17 +55,16 @@ jobs:
           echo "Current branch: ${{ github.ref_name }}"
           echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
           
-          # Erstelle minimalste GitVersion.yml für GitVersion 6.4+
+          # Erstelle GitVersion.yml für GitVersion 6.4+ mit globalem ContinuousDeployment
           cat > GitVersion.yml << EOF
           tag-prefix: v
+          mode: ContinuousDeployment
           branches:
             main:
-              mode: ContinuousDelivery
               label: ''
               increment: ${{ steps.version_increment.outputs.increment }}
             feature:
               regex: ^feature/(?<BranchName>.+)$
-              mode: ContinuousDeployment
               label: '{BranchName}'
               increment: Inherit
           EOF
