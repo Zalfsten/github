@@ -1,10 +1,10 @@
-name: Create Software Release
+name: Create Docker Release
 
 on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type for software release'
+        description: 'Version bump type for docker release'
         required: true
         default: 'patch'
         type: choice
