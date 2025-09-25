@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type for docker release'
-        required: true
+        description: 'Version bump type for final release'
+        required: false
         default: 'patch'
         type: choice
         options:
@@ -54,10 +54,11 @@ jobs:
             echo "release_type=feature" >> $GITHUB_OUTPUT
             echo "🌿 Feature release - patch increment"
           else
-            # Main branch: use user input for final release
-            echo "increment=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+            # Main branch: use user input for final release (default to patch if empty)
+            VERSION_BUMP="${{ github.event.inputs.version_bump || 'patch' }}"
+            echo "increment=$VERSION_BUMP" >> $GITHUB_OUTPUT
             echo "release_type=final" >> $GITHUB_OUTPUT
-            echo "🚀 Final release - ${{ github.event.inputs.version_bump }} increment"
+            echo "🚀 Final release - $VERSION_BUMP increment"
           fi
           
       - name: Create GitVersion configuration
@@ -194,6 +195,12 @@ jobs:
           output-file: sbom.spdx.json
           format: spdx-json
           
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-v${{ needs.calculate-version.outputs.version }}
+          path: sbom.spdx.json
+          
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
@@ -291,28 +298,28 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Create and push tag
-        uses: actions/github-script@v7
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
         with:
-          script: |
-            const tag = `v${{ needs.calculate-version.outputs.version }}`;
-            const sha = context.sha;
-            
-            try {
-              await github.rest.git.createRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `refs/tags/${tag}`,
-                sha: sha
-              });
-              console.log(`✅ Tag ${tag} created successfully`);
-            } catch (error) {
-              if (error.status === 422) {
-                console.log(`⚠️ Tag ${tag} already exists`);
-              } else {
-                throw error;
-              }
-            }
+          name: sbom-v${{ needs.calculate-version.outputs.version }}
+          path: .
+          
+      - name: Create and push tag
+        run: |
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
+          
+          TAG_NAME="v${{ needs.calculate-version.outputs.version }}"
+          
+          # Check if tag already exists
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "⚠️ Tag $TAG_NAME already exists"
+          else
+            # Create and push tag
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+            echo "✅ Tag $TAG_NAME created and pushed successfully"
+          fi
           
       - name: Create GitHub Release
         if: needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
@@ -320,6 +327,7 @@ jobs:
         with:
           tag_name: v${{ needs.calculate-version.outputs.version }}
           name: Release v${{ needs.calculate-version.outputs.version }}
+          files: sbom.spdx.json
           body: |
             ## Software Release v${{ needs.calculate-version.outputs.version }}
             
@@ -345,7 +353,7 @@ jobs:
             
             ### Security
             - ✅ Image scanned with Trivy
-            - ✅ SBOM (Software Bill of Materials) generated
+            - ✅ SBOM (Software Bill of Materials) generated and attached
             - ✅ Single-platform build for performance
             - ✅ Security-focused base image
             
