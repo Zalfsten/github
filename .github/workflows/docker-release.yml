@@ -24,95 +24,64 @@ env:
 jobs:
   calculate-version:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: read
-      pull-requests: read
-    
     outputs:
-      version: ${{ steps.determine_output_version.outputs.version }}
-      release-type: ${{ steps.determine_output_version.outputs.release-type }}
+      version: ${{ steps.set_version.outputs.version }}
+      release-type: ${{ steps.gitversion.outputs.release-type }}
       
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4
+      - uses: gittools/actions/gitversion/setup@v4
         with:
           versionSpec: '6.x'
           
-      - name: Determine version increment
-        id: version_increment
+      - name: Configure GitVersion and calculate version
+        id: gitversion
         run: |
+          # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            # Feature branch: always patch increment on base version
-            echo "increment=patch" >> $GITHUB_OUTPUT
-            echo "release_type=feature" >> $GITHUB_OUTPUT
+            INCREMENT="patch"
+            RELEASE_TYPE="feature"
             echo "🌿 Feature release - patch increment"
           else
-            # Main branch: use user input for final release (default to patch if empty)
-            VERSION_BUMP="${{ github.event.inputs.version_bump || 'patch' }}"
-            echo "increment=$VERSION_BUMP" >> $GITHUB_OUTPUT
-            echo "release_type=final" >> $GITHUB_OUTPUT
-            echo "🚀 Final release - $VERSION_BUMP increment"
+            INCREMENT="${{ github.event.inputs.version_bump || 'patch' }}"
+            RELEASE_TYPE="final"
+            echo "🚀 Final release - $INCREMENT increment"
           fi
           
-      - name: Create GitVersion configuration
-        run: |
-          echo "Current branch: ${{ github.ref_name }}"
-          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
-          
-          # Erstelle GitVersion.yml für GitVersion 6.4+ mit globalem ContinuousDeployment
+          # Create GitVersion config
           cat > GitVersion.yml << EOF
           tag-prefix: v
           mode: ContinuousDeployment
           branches:
             main:
               label: ''
-              increment: ${{ steps.version_increment.outputs.increment }}
+              increment: $INCREMENT
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: '{BranchName}'
               increment: Inherit
           EOF
           
-          echo "Generated GitVersion.yml:"
-          cat GitVersion.yml
+          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
           
       - name: Execute GitVersion
-        id: gitversion
         uses: gittools/actions/gitversion/execute@v4
         
-      - name: Display GitVersion outputs
-        run: |
-          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
-          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
-          echo "Major: ${{ steps.gitversion.outputs.major }}"
-          echo "Minor: ${{ steps.gitversion.outputs.minor }}"
-          echo "Patch: ${{ steps.gitversion.outputs.patch }}"
-          echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
-          
-      - name: Determine output version
-        id: determine_output_version
+      - name: Set final version
+        id: set_version
         run: |
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            # Feature branch: use semVer for pre-release tags like v1.0.1-foo.1
             VERSION="${{ steps.gitversion.outputs.semVer }}"
-            RELEASE_TYPE="feature"
-            echo "Using semVer for feature branch: $VERSION"
           else
-            # Main branch: use majorMinorPatch for clean final releases like v1.0.0
             VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
-            RELEASE_TYPE="final"
-            echo "Using majorMinorPatch for main branch: $VERSION"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
-          echo "Final version: v$VERSION (type: $RELEASE_TYPE)"
+          echo "Final version: v$VERSION"
 
   build-docker-image:
     needs: [calculate-version]
@@ -188,237 +157,96 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+      - uses: anchore/sbom-action@v0
         with:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
           
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           path: sbom.spdx.json
           
-      - name: Scan image for vulnerabilities
-        uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@master
         with:
           image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: sarif
+          output: trivy-results.sarif
           
-      - name: Scan image for display (table format)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
-          format: 'table'
-          output: 'trivy-results.txt'
-          
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
-          
-      - name: Display Trivy scan results
-        if: always()
-        run: |
-          echo "## 🔍 Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Trivy Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
-          echo "Results uploaded to **Security** tab → **Code scanning**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [[ -f "trivy-results.txt" ]]; then
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ Table format scan results not found" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          if [[ -f "trivy-results.sarif" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **Detailed SARIF report uploaded to GitHub Security tab**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**View detailed results:** Repository → Security → Code scanning" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ SARIF file not found - detailed scan may have failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-      - name: Create image summary
-        run: |
-          echo "## 🐳 Docker Image Status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ steps.dockerhub_secrets.outputs.available }}" == "true" ]]; then
-            echo "### ✅ Docker Image Built and Pushed to DockerHub" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Image Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **DockerHub**: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Tag**: ${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Digest**: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Platform**: linux/amd64" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
-            echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ⚠️ Docker Image Built Locally (Not Pushed)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "The Docker image was built successfully but **not pushed** to DockerHub because the required secrets are missing." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Image Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **Local Tag**: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Platform**: linux/amd64 (local build)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Security Scan**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**To enable DockerHub push, configure these secrets:**" >> $GITHUB_STEP_SUMMARY
-            echo "- \`DOCKERHUB_USER\`: Your DockerHub username" >> $GITHUB_STEP_SUMMARY
-            echo "- \`DOCKERHUB_TOKEN\`: Your DockerHub access token" >> $GITHUB_STEP_SUMMARY
-          fi
+          sarif_file: trivy-results.sarif
 
-  create-tag-and-release:
+  create-release:
+  create-release:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.result == 'success'
+    if: needs.build-docker-image.result == 'success' && needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
     
     permissions:
       contents: write
-      pull-requests: read
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Download SBOM artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
-          path: .
           
-      - name: Create and push tag
-        id: create_tags
+      - name: Create timestamp tag and release
         run: |
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           
-          # Timestamp-based tag for chronological GitHub Release sorting
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          RELEASE_TAG="${TIMESTAMP}-docker-v${{ needs.calculate-version.outputs.version }}"
+          # Create timestamp tag
+          RELEASE_TAG="$(date +%Y%m%d%H%M%S)-docker-v${{ needs.calculate-version.outputs.version }}"
+          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Tag exists"
           
-          echo "Creating tag: $RELEASE_TAG"
-          
-          # Create timestamp-based release tag
-          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "⚠️ Release tag $RELEASE_TAG already exists"
-          else
-            git tag "$RELEASE_TAG"
-            git push origin "$RELEASE_TAG"
-            echo "✅ Release tag $RELEASE_TAG created and pushed"
+          # Check if release exists
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q true; then
+            echo "Updating draft release"
+          elif gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Final release exists, exiting" && exit 1
           fi
           
-          # Export for use in GitHub Release
-          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          # Create/update release
+          gh release create "$RELEASE_TAG" sbom.spdx.json \
+            --title "Docker Release v${{ needs.calculate-version.outputs.version }}" \
+            --notes "## Docker Release v${{ needs.calculate-version.outputs.version }}
+
+          **Docker Image**: ${{ secrets.DOCKERHUB_USER && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Built locally' }}
           
-      - name: Create GitHub Release
-        if: needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.create_tags.outputs.release_tag }}
-          name: Docker Release v${{ needs.calculate-version.outputs.version }}
-          files: sbom.spdx.json
-          generate_release_notes: true
-          make_latest: true
-          body: |
-            ## Software Release v${{ needs.calculate-version.outputs.version }}
-            
-            This is a **${{ needs.calculate-version.outputs.release-type }}** release triggered manually.
-            
-            ### Version Increment
-            - **Type**: ${{ github.event.inputs.version_bump || 'patch (feature)' }}
-            - **Branch**: ${{ github.ref_name }}
-            
-            ## 🐳 Docker Image
-            
-            The Docker image is the primary deliverable of this release.
-            
-            ${{ secrets.DOCKERHUB_USER && format('```bash
-            docker pull {0}/{1}:{2}
-            ```', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '**Note**: Docker image was built locally but not pushed to DockerHub (missing secrets).' }}
-            
-            ### Image Details
-            ${{ secrets.DOCKERHUB_USER && format('- **DockerHub**: `{0}/{1}`', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '- **DockerHub**: Not configured (missing secrets)' }}
-            - **Tag**: `${{ needs.calculate-version.outputs.version }}`
-            ${{ needs.build-docker-image.outputs.image-digest && format('- **Digest**: `{0}`', needs.build-docker-image.outputs.image-digest) || '' }}
-            - **Platforms**: linux/amd64
-            
-            ### 📋 Security & Compliance
-            - ✅ Image scanned with Trivy (results in Security tab)
-            - ✅ SBOM (Software Bill of Materials) attached to this release
-            - ✅ Single-platform build for performance
-            - ✅ Security-focused container image
-            
-            ### 🔄 Source Code Reproduction
-            ```bash
-            git checkout v${{ needs.calculate-version.outputs.version }}
-            docker build -t local-build:${{ needs.calculate-version.outputs.version }} .
-            ```
-            
-            ### Helm Deployment
-            ${{ secrets.DOCKERHUB_USER && format('```bash
-            helm upgrade --install fairagro-middleware ./helm \
-              --set image.tag={0} \
-              --set image.repository={1}/{2}
-            ```', needs.calculate-version.outputs.version, env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '**Note**: Configure DockerHub secrets to enable Helm deployment with DockerHub images.' }}
-            
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.calculate-version.outputs.version }}...HEAD
-          draft: false
-          prerelease: ${{ needs.calculate-version.outputs.release-type == 'feature' }}
+          - ✅ Security scan completed (see Security tab)
+          - ✅ SBOM attached
+          - 🐳 Platform: linux/amd64" \
+            --draft --latest || gh release edit "$RELEASE_TAG" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-helm-chart:
-    needs: [calculate-version, build-docker-image, create-tag-and-release]
+    needs: [calculate-version, build-docker-image, create-release]
     runs-on: ubuntu-latest
-    if: needs.create-tag-and-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed == 'true'
+    if: needs.create-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed == 'true'
     
     permissions:
       contents: write
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Update Helm Chart appVersion
+      - name: Update and commit Chart.yaml
         run: |
-          # Update appVersion in Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${{ needs.calculate-version.outputs.version }}\"/" helm/Chart.yaml
           
-          # Show the changes
-          echo "Updated Chart.yaml:"
-          cat helm/Chart.yaml
-          
-      - name: Commit Helm chart changes
-        run: |
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           
-          if git diff --quiet helm/Chart.yaml; then
-            echo "No changes to commit"
-          else
-            git add helm/Chart.yaml
-            git commit -m "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}
-
-            Automatically updated Helm chart appVersion after software release v${{ needs.calculate-version.outputs.version }}"
-            git push
-            echo "✅ Helm chart appVersion updated to ${{ needs.calculate-version.outputs.version }}"
-          fi
+          git add helm/Chart.yaml
+          git diff --staged --quiet || git commit -m "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}"
+          git push
