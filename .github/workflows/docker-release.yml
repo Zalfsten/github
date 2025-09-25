@@ -231,16 +231,27 @@ jobs:
           body: |
             ## Docker Release v${{ needs.calculate-version.outputs.version }}
 
-            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
+            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
+            **Image Digest**: `${{ needs.build-docker-image.outputs.image-digest }}`
             
             - ✅ Security scan completed (see Security tab)
             - ✅ SBOM attached (sbom.spdx.json)
             - 🐳 Platform: linux/amd64
             
             ### Installation
-            ```bash
+            ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && '```bash
             # Pull and run the Docker image
-            docker pull ${{ needs.build-docker-image.outputs.dockerhub-pushed && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Image not available on DockerHub' }}
+            docker pull ' || '⚠️ **Image not available on DockerHub** (missing credentials)
+
+            The Docker image was built locally but not pushed to DockerHub.
+            You can build it yourself:
+
+            ```bash
+            # Build the image locally
+            git clone https://github.com/' }}${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || format('{0}
+            cd {1}
+            git checkout {2}
+            docker build -t local/{3}:{4} .', github.repository, github.repository, github.sha, env.IMAGE_NAME, needs.calculate-version.outputs.version) }}
             ```
           files: |
             sbom.spdx.json
