@@ -50,67 +50,28 @@ jobs:
             fi
           fi
           
-      - name: Create GitVersion configuration with regex tag filtering
+      - name: Create GitVersion configuration
         run: |
           echo "Current branch: ${{ github.ref_name }}"
           echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
           
-          # Lass GitVersion die letzte finale Release automatisch finden
-          # Der regex tag-prefix filtert Pre-Release-Tags automatisch raus
-          
-          # Bestimme next-version basierend auf increment type und letzter finaler Release
-          # GitVersion wird automatisch die höchste finale Release als Basis nehmen
-          LAST_FINAL_TAG=$(git tag -l "v*" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
-          
-          if [ -z "$LAST_FINAL_TAG" ]; then
-            LAST_FINAL_TAG="v0.0.0"
-          fi
-          
-          LAST_VERSION=${LAST_FINAL_TAG#v}
-          echo "Last final release: $LAST_FINAL_TAG ($LAST_VERSION)"
-          
-          # Parse version parts
-          if [[ "$LAST_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            MAJOR=${BASH_REMATCH[1]}
-            MINOR=${BASH_REMATCH[2]}
-            PATCH=${BASH_REMATCH[3]}
-          else
-            echo "Invalid version format, using 0.0.0"
-            MAJOR=0
-            MINOR=0
-            PATCH=0
-          fi
-          
-          # Berechne next-version basierend auf increment type
-          case "${{ steps.version_increment.outputs.increment }}" in
-            major)
-              NEXT_VERSION="$((MAJOR + 1)).0.0"
-              ;;
-            minor)
-              NEXT_VERSION="$MAJOR.$((MINOR + 1)).0"
-              ;;
-            patch)
-              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-              ;;
-            *)
-              NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-              ;;
-          esac
-          
-          echo "Next version will be: $NEXT_VERSION"
-          
-          # Erstelle GitVersion.yml 
+          # Erstelle GitVersion.yml ohne komplexe Filtermechanismen
           cat > GitVersion.yml << EOF
-          next-version: $NEXT_VERSION
           tag-prefix: v
-          semantic-version-format: Loose
           branches:
             main:
-              label: ''
+              mode: ContinuousDelivery
+              tag: ''
+              increment: ${{ steps.version_increment.outputs.increment }}
+              source-branches: ['feature']
+              is-mainline: true
             feature:
               regex: ^feature/(?<BranchName>.+)$
-              label: "{BranchName}"
+              mode: ContinuousDeployment
+              tag: '{BranchName}'
+              increment: Inherit
               source-branches: ['main']
+              is-mainline: false
           EOF
           
           echo "Generated GitVersion.yml:"
