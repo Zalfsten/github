@@ -102,11 +102,7 @@ jobs:
           # Erstelle GitVersion.yml mit regex tag-prefix für finale Releases
           cat > GitVersion.yml << EOF
           next-version: $NEXT_VERSION
-          tag-prefix: ^v[0-9]+\.[0-9]+\.[0-9]+$
-          semantic-version-format: Strict
-          strategies:
-            - ConfiguredNextVersion
-            - TaggedCommit
+          tag-prefix: v
           branches:
             main:
               label: ''
