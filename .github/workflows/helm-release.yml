@@ -179,42 +179,56 @@ jobs:
           
       - name: Create Helm Chart GitHub Release
         if: needs.calculate-helm-version.outputs.release-type == 'final' && github.ref_name == 'main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.create_tags.outputs.release_tag }}
-          name: Helm Chart Release v${{ needs.calculate-helm-version.outputs.version }}
-          files: ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz
-          body: |
-            ## Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+        run: |
+          # Check if release already exists
+          RELEASE_TAG="${{ steps.create_tags.outputs.release_tag }}"
+          
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q true; then
+            echo "Draft release exists, updating it"
+          elif gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Final release already exists, skipping creation"
+            exit 0
+          fi
+          
+          # Create or update draft release
+          gh release create "$RELEASE_TAG" ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz \
+            --title "Helm Chart Release v${{ needs.calculate-helm-version.outputs.version }}" \
+            --notes "## Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
             
             This is a **${{ needs.calculate-helm-version.outputs.release-type }}** Helm chart release triggered manually.
             
             ### Version Increment
             - **Type**: ${{ github.event.inputs.version_bump || 'patch (feature)' }}
             - **Branch**: ${{ github.ref_name }}
-            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
+            - **Chart Version**: \`${{ needs.calculate-helm-version.outputs.version }}\`
             
             ### Current Chart Details
             
-            Based on the current `helm/Chart.yaml`:
-            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
-            - **App Version**: `${{ steps.extract_app_version.outputs.app_version }}`
+            Based on the current \`helm/Chart.yaml\`:
+            - **Chart Version**: \`${{ needs.calculate-helm-version.outputs.version }}\`
+            - **App Version**: \`${{ steps.extract_app_version.outputs.app_version }}\`
             
             ### Installation
-            ```bash
-            helm upgrade --install fairagro-middleware ./helm \
-              --set image.tag=${{ steps.extract_app_version.outputs.app_version }} \
+            \`\`\`bash
+            helm upgrade --install fairagro-middleware ./helm \\
+              --set image.tag=${{ steps.extract_app_version.outputs.app_version }} \\
               --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
-            ```
+            \`\`\`
             
             ### Helm Package
-            ```bash
+            \`\`\`bash
             helm package ./helm --version ${{ needs.calculate-helm-version.outputs.version }}
-            ```
+            \`\`\`
             
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/chart-v${{ needs.calculate-helm-version.outputs.version }}...HEAD
-          draft: false
-          prerelease: false
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/chart-v${{ needs.calculate-helm-version.outputs.version }}...HEAD" \
+            --draft --latest || echo "Release creation/update completed"
+            
+          # Finalize the draft release (makes it immutable if GitHub setting is enabled)
+          echo "Finalizing draft release..."
+          gh release edit "$RELEASE_TAG" --draft=false
+          echo "✅ Release published and finalized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   push-helm-chart:
     needs: [calculate-helm-version, create-helm-tag-and-release]

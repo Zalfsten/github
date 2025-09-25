@@ -330,15 +330,21 @@ jobs:
           
       - name: Create GitHub Release
         if: needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.create_tags.outputs.release_tag }}
-          name: Docker Release v${{ needs.calculate-version.outputs.version }}
-          files: sbom.spdx.json
-          generate_release_notes: true
-          make_latest: true
-          body: |
-            ## Software Release v${{ needs.calculate-version.outputs.version }}
+        run: |
+          # Check if release already exists
+          RELEASE_TAG="${{ steps.create_tags.outputs.release_tag }}"
+          
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q true; then
+            echo "Draft release exists, updating it"
+          elif gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Final release already exists, skipping creation"
+            exit 0
+          fi
+          
+          # Create or update draft release
+          gh release create "$RELEASE_TAG" sbom.spdx.json \
+            --title "Docker Release v${{ needs.calculate-version.outputs.version }}" \
+            --notes "## Software Release v${{ needs.calculate-version.outputs.version }}
             
             This is a **${{ needs.calculate-version.outputs.release-type }}** release triggered manually.
             
@@ -356,7 +362,7 @@ jobs:
             
             ### Image Details
             ${{ secrets.DOCKERHUB_USER && format('- **DockerHub**: `{0}/{1}`', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '- **DockerHub**: Not configured (missing secrets)' }}
-            - **Tag**: `${{ needs.calculate-version.outputs.version }}`
+            - **Tag**: \`${{ needs.calculate-version.outputs.version }}\`
             ${{ needs.build-docker-image.outputs.image-digest && format('- **Digest**: `{0}`', needs.build-docker-image.outputs.image-digest) || '' }}
             - **Platforms**: linux/amd64
             
@@ -367,21 +373,27 @@ jobs:
             - ✅ Security-focused container image
             
             ### 🔄 Source Code Reproduction
-            ```bash
+            \`\`\`bash
             git checkout v${{ needs.calculate-version.outputs.version }}
             docker build -t local-build:${{ needs.calculate-version.outputs.version }} .
-            ```
+            \`\`\`
             
             ### Helm Deployment
             ${{ secrets.DOCKERHUB_USER && format('```bash
-            helm upgrade --install fairagro-middleware ./helm \
-              --set image.tag={0} \
+            helm upgrade --install fairagro-middleware ./helm \\
+              --set image.tag={0} \\
               --set image.repository={1}/{2}
             ```', needs.calculate-version.outputs.version, env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '**Note**: Configure DockerHub secrets to enable Helm deployment with DockerHub images.' }}
             
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.calculate-version.outputs.version }}...HEAD
-          draft: false
-          prerelease: ${{ needs.calculate-version.outputs.release-type == 'feature' }}
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.calculate-version.outputs.version }}...HEAD" \
+            --draft --latest || echo "Release creation/update completed"
+            
+          # Finalize the draft release (makes it immutable if GitHub setting is enabled)
+          echo "Finalizing draft release..."
+          gh release edit "$RELEASE_TAG" --draft=false
+          echo "✅ Release published and finalized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-tag-and-release]
