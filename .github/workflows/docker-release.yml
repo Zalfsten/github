@@ -37,10 +37,9 @@ jobs:
           
       - uses: gittools/actions/gitversion/setup@v4
         with:
-          versionSpec: '6.x'
+          versionSpec: 6.4.x
           
       - name: Configure GitVersion and calculate version
-        id: gitversion
         run: |
           # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
@@ -70,6 +69,7 @@ jobs:
           echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
           
       - name: Execute GitVersion
+        id: gitversion
         uses: gittools/actions/gitversion/execute@v4
         
       - name: Set final version
@@ -136,7 +136,7 @@ jobs:
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.revision=${{ github.sha }}
             
       - name: Build Docker image
@@ -180,10 +180,9 @@ jobs:
           sarif_file: trivy-results.sarif
 
   create-release:
-  create-release:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.result == 'success' && needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
+    if: needs.build-docker-image.result == 'success'
     
     permissions:
       contents: write
@@ -202,28 +201,35 @@ jobs:
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           
-          # Create timestamp tag
+          # Create timestamp tag (always for all releases)
           RELEASE_TAG="$(date +%Y%m%d%H%M%S)-docker-v${{ needs.calculate-version.outputs.version }}"
           git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Tag exists"
           
-          # Check if release exists
-          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q true; then
-            echo "Updating draft release"
-          elif gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Final release exists, exiting" && exit 1
-          fi
-          
-          # Create/update release
-          gh release create "$RELEASE_TAG" sbom.spdx.json \
-            --title "Docker Release v${{ needs.calculate-version.outputs.version }}" \
-            --notes "## Docker Release v${{ needs.calculate-version.outputs.version }}
+          # Only create GitHub release for final releases (main branch)
+          if [[ "${{ needs.calculate-version.outputs.release-type }}" == "final" ]]; then
+            echo "Creating GitHub release for final release"
+            
+            # Check if release exists
+            if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q true; then
+              echo "Updating draft release"
+            elif gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              echo "Final release exists, exiting" && exit 1
+            fi
+            
+            # Create/update release
+            gh release create "$RELEASE_TAG" sbom.spdx.json \
+              --title "Docker Release v${{ needs.calculate-version.outputs.version }}" \
+              --notes "## Docker Release v${{ needs.calculate-version.outputs.version }}
 
-          **Docker Image**: ${{ secrets.DOCKERHUB_USER && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Built locally' }}
-          
-          - ✅ Security scan completed (see Security tab)
-          - ✅ SBOM attached
-          - 🐳 Platform: linux/amd64" \
-            --draft --latest || gh release edit "$RELEASE_TAG" --draft=false
+            **Docker Image**: ${{ secrets.DOCKERHUB_USER && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Built locally' }}
+            
+            - ✅ Security scan completed (see Security tab)
+            - ✅ SBOM attached
+            - 🐳 Platform: linux/amd64" \
+              --draft --latest || gh release edit "$RELEASE_TAG" --draft=false
+          else
+            echo "Feature release - Git tag created but no GitHub release"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

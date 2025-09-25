@@ -14,6 +14,8 @@ on:
         - patch
 
 env:
+  GIT_USER_NAME: GitHub Pipeline
+  GIT_USER_EMAIL: github_pipeline@fairagro.net
   DOCKERHUB_NAMESPACE: zalf
   IMAGE_NAME: fairagro_advanced_middleware_api
 
@@ -69,7 +71,7 @@ jobs:
           version: '3.14.0'
           
       - name: Create Helm release
-        if: env.RELEASE_TYPE == 'final' && github.ref_name == 'main'
+        if: github.ref_name == 'main' && github.event.inputs.version_bump != ''
         run: |
           # Determine version
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
@@ -108,8 +110,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Push to DockerHub
-        if: env.RELEASE_TYPE == 'final' || env.RELEASE_TYPE == 'feature'
+        if: always()
         run: |
+          # Check if we should push based on release type
+          if [[ "$RELEASE_TYPE" != "final" && "$RELEASE_TYPE" != "feature" ]]; then
+            echo "⏭️ Skipping DockerHub push - not a final or feature release"
+            exit 0
+          fi
           if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
             VERSION="${{ steps.gitversion.outputs.semVer }}"
             [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
