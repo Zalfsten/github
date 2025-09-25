@@ -43,23 +43,3 @@ jobs:
             echo "- patch version (for bug fixes)"
             exit 1
           fi
-
-      - name: Comment on PR if labels missing
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## ⚠️ Missing Version Label
-              
-              This pull request requires exactly one version label to determine how to increment the version number:
-              
-              - \`major version\` - for breaking changes (x.0.0)
-              - \`minor version\` - for new features (0.x.0)  
-              - \`patch version\` - for bug fixes (0.0.x)
-              
-              Please add the appropriate label to your PR before merging.`
-            })
