@@ -135,13 +135,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the release ID from the draft release we just created
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id')
+          echo "🔍 Looking for draft release with tag: ${{ steps.create_tag.outputs.release-tag }}"
           
-          # Convert draft to final release
-          gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
-            --method PATCH \
-            --field draft=false
+          # List all releases to debug
+          echo "📋 All releases:"
+          gh api repos/${{ github.repository }}/releases --jq '.[].tag_name'
+          
+          # Try to get the release ID from the draft release we just created
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id' 2>/dev/null); then
+            echo "✅ Found release ID: $RELEASE_ID"
+            
+            # Convert draft to final release
+            gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
+              --method PATCH \
+              --field draft=false
+            echo "🎉 Release finalized successfully"
+          else
+            echo "❌ Release not found with tag: ${{ steps.create_tag.outputs.release-tag }}"
+            echo "🔍 Searching for releases containing version ${{ steps.create_tag.outputs.chart-version }}..."
+            
+            # Try to find release by version in name or tag
+            gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name | contains("${{ steps.create_tag.outputs.chart-version }}")) | {id, tag_name, name, draft}'
+            
+            exit 1
+          fi
           
       - name: Push to DockerHub
         if: always()
