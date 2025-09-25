@@ -165,13 +165,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           
-      - uses: anchore/sbom-action@v0
+      - name: Generate SBOM (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: anchore/sbom-action@v0
         with:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
           
-      - uses: actions/upload-artifact@v4
+      - name: Upload SBOM artifact (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: actions/upload-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           path: sbom.spdx.json
@@ -200,7 +204,9 @@ jobs:
         with:
           fetch-depth: 0
           
-      - uses: actions/download-artifact@v4
+      - name: Download SBOM artifact (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: actions/download-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           
@@ -227,18 +233,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
-          name: "Docker Release v${{ needs.calculate-version.outputs.version }}"
+          name: "docker-v${{ needs.calculate-version.outputs.version }}"
           body: |
             ## Docker Release v${{ needs.calculate-version.outputs.version }}
 
-            **Docker Image**: ${{ secrets.DOCKERHUB_USER && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Built locally' }}
+            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
             
             - ✅ Security scan completed (see Security tab)
-            - ✅ SBOM attached
+            - ✅ SBOM attached (sbom.spdx.json)
             - 🐳 Platform: linux/amd64
-          files: sbom.spdx.json
+            
+            ### Installation
+            ```bash
+            # Pull and run the Docker image
+            docker pull ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Image not available on DockerHub' }}
+            ```
+          files: |
+            sbom.spdx.json
           draft: true
           make_latest: true
+          generate_release_notes: true
+          append_body: true
+          fail_on_unmatched_files: true
           
       - name: Finalize Release
         if: needs.calculate-version.outputs.release-type == 'final'
@@ -246,8 +262,6 @@ jobs:
         with:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
           draft: false
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-release]
