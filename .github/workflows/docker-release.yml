@@ -328,6 +328,8 @@ jobs:
           tag_name: v${{ needs.calculate-version.outputs.version }}
           name: Release v${{ needs.calculate-version.outputs.version }}
           files: sbom.spdx.json
+          generate_release_notes: true
+          make_latest: true
           body: |
             ## Software Release v${{ needs.calculate-version.outputs.version }}
             
