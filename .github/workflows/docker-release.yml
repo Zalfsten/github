@@ -286,7 +286,7 @@ jobs:
   update-helm-chart:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.outputs.dockerhub-pushed
+    if: needs.build-docker-image.outputs.dockerhub-pushed == 'true'
     
     permissions:
       contents: write
