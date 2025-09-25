@@ -99,10 +99,11 @@ jobs:
           
           echo "Next version will be: $NEXT_VERSION"
           
-          # Erstelle GitVersion.yml mit regex tag-prefix für finale Releases
+          # Erstelle GitVersion.yml 
           cat > GitVersion.yml << EOF
           next-version: $NEXT_VERSION
           tag-prefix: v
+          semantic-version-format: Loose
           branches:
             main:
               label: ''
