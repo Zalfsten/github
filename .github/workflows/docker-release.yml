@@ -180,7 +180,6 @@ jobs:
           sarif_file: trivy-results.sarif
 
   create-release:
-  create-release:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
     if: needs.build-docker-image.result == 'success' && needs.calculate-version.outputs.release-type == 'final' && github.ref_name == 'main'
