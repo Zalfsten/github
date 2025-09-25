@@ -18,164 +18,77 @@ env:
   IMAGE_NAME: fairagro_advanced_middleware_api
 
 jobs:
-  calculate-helm-version:
+  helm-release:
     runs-on: ubuntu-latest
-    
     permissions:
-      contents: read
-    
-    outputs:
-      version: ${{ steps.determine_output_version.outputs.version }}
-      release-type: ${{ steps.determine_output_version.outputs.release-type }}
+      contents: write
       
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4
+      - uses: gittools/actions/gitversion/setup@v4
         with:
           versionSpec: '6.x'
           
-      - name: Determine version increment
-        id: version_increment
+      - name: Configure GitVersion and calculate version
         run: |
+          # Determine increment and release type
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            # Feature branch: always patch increment on base version
-            echo "increment=patch" >> $GITHUB_OUTPUT
-            echo "release_type=feature" >> $GITHUB_OUTPUT
-            echo "🌿 Helm Feature release - patch increment"
+            INCREMENT="patch"
+            RELEASE_TYPE="feature"
+            echo "🌿 Helm feature release"
           else
-            # Main branch: use user input for final release
-            echo "increment=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
-            echo "release_type=final" >> $GITHUB_OUTPUT
-            echo "🚀 Helm Final release - ${{ github.event.inputs.version_bump }} increment"
+            INCREMENT="${{ github.event.inputs.version_bump }}"
+            RELEASE_TYPE="final"
+            echo "🚀 Helm final release - $INCREMENT increment"
           fi
           
-      - name: Create Helm GitVersion configuration
-        run: |
-          echo "Current branch: ${{ github.ref_name }}"
-          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
-          
-          # Erstelle GitVersion.yml für Helm Charts mit chart-v prefix
+          # Create GitVersion config
           cat > GitVersion.yml << EOF
           tag-prefix: chart-v
           mode: ContinuousDeployment
           branches:
             main:
               label: ''
-              increment: ${{ steps.version_increment.outputs.increment }}
+              increment: $INCREMENT
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: '{BranchName}'
               increment: Inherit
           EOF
           
-          echo "Generated Helm GitVersion.yml:"
-          cat GitVersion.yml
+          echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
           
-      - name: Execute GitVersion for Helm
-        id: helm_gitversion
-        uses: gittools/actions/gitversion/execute@v4
+      - uses: gittools/actions/gitversion/execute@v4
+        id: gitversion
         
-      - name: Display GitVersion outputs
-        run: |
-          echo "SemVer: ${{ steps.helm_gitversion.outputs.semVer }}"
-          echo "MajorMinorPatch: ${{ steps.helm_gitversion.outputs.majorMinorPatch }}"
-          echo "Major: ${{ steps.helm_gitversion.outputs.major }}"
-          echo "Minor: ${{ steps.helm_gitversion.outputs.minor }}"
-          echo "Patch: ${{ steps.helm_gitversion.outputs.patch }}"
-          echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
-          
-      - name: Determine output version
-        id: determine_output_version
-        run: |
-          if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            # Feature branch: use semVer for pre-release tags like chart-v1.0.1-foo.1
-            VERSION="${{ steps.helm_gitversion.outputs.semVer }}"
-            RELEASE_TYPE="feature"
-            echo "Using semVer for feature branch: $VERSION"
-          else
-            # Main branch: use majorMinorPatch for clean final releases like chart-v1.0.0
-            VERSION="${{ steps.helm_gitversion.outputs.majorMinorPatch }}"
-            RELEASE_TYPE="final"
-            echo "Using majorMinorPatch for main branch: $VERSION"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
-          echo "Final Helm Chart version: chart-v$VERSION (type: $RELEASE_TYPE)"
-
-  create-helm-tag-and-release:
-    needs: [calculate-helm-version]
-    runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Create and push Helm chart tag
-        id: create_tags
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const version = `${{ needs.calculate-helm-version.outputs.version }}`;
-            const sha = context.sha;
-            
-            // Timestamp-based tag for chronological GitHub Release sorting
-            const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); // YYYYMMDDHHMMSS
-            const releaseTag = `${timestamp}-chart-v${version}`;
-            
-            console.log(`Creating tag: ${releaseTag}`);
-            
-            // Create timestamp-based release tag
-            try {
-              await github.rest.git.createRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `refs/tags/${releaseTag}`,
-                sha: sha
-              });
-              console.log(`✅ Release tag ${releaseTag} created successfully`);
-            } catch (error) {
-              if (error.status === 422) {
-                console.log(`⚠️ Release tag ${releaseTag} already exists`);
-              } else {
-                throw error;
-              }
-            }
-            
-            // Export for use in GitHub Release
-            core.setOutput('release_tag', releaseTag);
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4
         with:
           version: '3.14.0'
           
-      - name: Extract current appVersion
-        id: extract_app_version
+      - name: Create Helm release
+        if: env.RELEASE_TYPE == 'final' && github.ref_name == 'main'
         run: |
+          # Determine version
+          if [[ "${{ github.ref_name }}" == feature/* ]]; then
+            VERSION="${{ steps.gitversion.outputs.semVer }}"
+          else
+            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          fi
+          
+          # Extract appVersion
           APP_VERSION=$(grep '^appVersion:' helm/Chart.yaml | sed 's/appVersion: *"*\([^"]*\)"*/\1/')
-          echo "app_version=$APP_VERSION" >> $GITHUB_OUTPUT
-          echo "Current appVersion: $APP_VERSION"
           
-      - name: Package Helm Chart for Release
-        run: |
-          # Package the Helm chart
-          helm package ./helm \
-            --version ${{ needs.calculate-helm-version.outputs.version }} \
-            --app-version ${{ steps.extract_app_version.outputs.app_version }}
+          # Create timestamp tag
+          RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
+          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Tag exists"
           
-          echo "✅ Helm chart packaged: ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz"
+          # Package Helm chart
+          helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"
           
       - name: Create Helm Chart GitHub Release
         if: needs.calculate-helm-version.outputs.release-type == 'final' && github.ref_name == 'main'
@@ -250,78 +163,12 @@ jobs:
         id: dockerhub_secrets
         run: |
           if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            echo "available=true" >> $GITHUB_OUTPUT
-            echo "✅ DockerHub secrets are available for Helm chart push"
+            VERSION="${{ steps.gitversion.outputs.semVer }}"
+            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
+            helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
+            echo "✅ Pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:$VERSION"
           else
-            echo "available=false" >> $GITHUB_OUTPUT
-            echo "⚠️ DockerHub secrets not available - skipping Helm chart push"
-            echo ""
-            echo "To enable Helm chart push to DockerHub, configure these repository secrets:"
-            echo "- DOCKERHUB_USER: Your DockerHub username"
-            echo "- DOCKERHUB_TOKEN: Your DockerHub access token"
-          fi
-          
-      - name: Set up Helm
-        if: steps.dockerhub_secrets.outputs.available == 'true'
-        uses: azure/setup-helm@v4
-        with:
-          version: '3.14.0'
-          
-      - name: Log in to DockerHub Registry
-        if: steps.dockerhub_secrets.outputs.available == 'true'
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
-          
-      - name: Package and push Helm chart
-        if: steps.dockerhub_secrets.outputs.available == 'true'
-        run: |
-          # Package the Helm chart
-          helm package ./helm \
-            --version ${{ needs.calculate-helm-version.outputs.version }} \
-            --app-version ${{ needs.create-helm-tag-and-release.outputs.app_version || 'latest' }}
-          
-          # Push to DockerHub as OCI artifact
-          helm push ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz \
-            oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
-          
-          echo "✅ Helm chart pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}"
-          
-      - name: Create chart summary
-        run: |
-          echo "## 📦 Helm Chart Status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ steps.dockerhub_secrets.outputs.available }}" == "true" ]]; then
-            echo "### ✅ Helm Chart Packaged and Pushed to DockerHub" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Chart Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **Registry**: DockerHub (OCI)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Repository**: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Chart Version**: ${{ needs.calculate-helm-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **App Version**: ${{ needs.create-helm-tag-and-release.outputs.app_version || 'latest' }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Type**: ${{ needs.calculate-helm-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Installation Command" >> $GITHUB_STEP_SUMMARY
-            echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "helm install fairagro-middleware \\" >> $GITHUB_STEP_SUMMARY
-            echo "  oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }} \\" >> $GITHUB_STEP_SUMMARY
-            echo "  --version ${{ needs.calculate-helm-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
-            echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "helm pull oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }} \\" >> $GITHUB_STEP_SUMMARY
-            echo "  --version ${{ needs.calculate-helm-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ⚠️ Helm Chart Not Pushed" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "The Helm chart was **not pushed** to DockerHub because the required secrets are missing." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Local Chart Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **Chart Version**: ${{ needs.calculate-helm-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Type**: ${{ needs.calculate-helm-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**To enable DockerHub push, configure these secrets:**" >> $GITHUB_STEP_SUMMARY
-            echo "- \`DOCKERHUB_USER\`: Your DockerHub username" >> $GITHUB_STEP_SUMMARY
-            echo "- \`DOCKERHUB_TOKEN\`: Your DockerHub access token" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Skipping DockerHub push - missing secrets"
           fi
