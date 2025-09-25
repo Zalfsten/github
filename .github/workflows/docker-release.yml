@@ -226,6 +226,7 @@ jobs:
             
             # Create/update release
             gh release create "$RELEASE_TAG" sbom.spdx.json \
+              --target "${{ github.sha }}" \
               --title "Docker Release v${{ needs.calculate-version.outputs.version }}" \
               --notes "## Docker Release v${{ needs.calculate-version.outputs.version }}
 

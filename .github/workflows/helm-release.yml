@@ -99,6 +99,7 @@ jobs:
             
             # Create release (draft first, then finalize)
             gh release create "$RELEASE_TAG" "${{ env.IMAGE_NAME }}-$VERSION.tgz" \
+              --target "${{ github.sha }}" \
               --title "Helm Chart Release v$VERSION" \
               --notes "## Helm Chart Release v$VERSION
               
@@ -107,6 +108,10 @@ jobs:
             
             \`\`\`bash
             helm upgrade --install fairagro-middleware ./helm \\
+              --set image.tag=$APP_VERSION \\
+              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+            \`\`\`" \
+              --draft || gh release edit "$RELEASE_TAG" --draft=false
               --set image.tag=$APP_VERSION \\
               --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
             \`\`\`" \
