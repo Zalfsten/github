@@ -341,7 +341,7 @@ jobs:
             
             ## 🐳 Docker Image
             
-            The Docker image for this release was built successfully.
+            The Docker image is the primary deliverable of this release.
             
             ${{ secrets.DOCKERHUB_USER && format('```bash
             docker pull {0}/{1}:{2}
@@ -353,11 +353,17 @@ jobs:
             ${{ needs.build-docker-image.outputs.image-digest && format('- **Digest**: `{0}`', needs.build-docker-image.outputs.image-digest) || '' }}
             - **Platforms**: linux/amd64
             
-            ### Security
-            - ✅ Image scanned with Trivy
-            - ✅ SBOM (Software Bill of Materials) generated and attached
+            ### 📋 Security & Compliance
+            - ✅ Image scanned with Trivy (results in Security tab)
+            - ✅ SBOM (Software Bill of Materials) attached to this release
             - ✅ Single-platform build for performance
-            - ✅ Security-focused base image
+            - ✅ Security-focused container image
+            
+            ### 🔄 Source Code Reproduction
+            ```bash
+            git checkout v${{ needs.calculate-version.outputs.version }}
+            docker build -t local-build:${{ needs.calculate-version.outputs.version }} .
+            ```
             
             ### Helm Deployment
             ${{ secrets.DOCKERHUB_USER && format('```bash
