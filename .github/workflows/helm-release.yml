@@ -1,0 +1,207 @@
+name: Create Helm Chart Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type for Helm chart release'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - major
+        - minor  
+        - patch
+
+jobs:
+  calculate-helm-version:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+    
+    outputs:
+      version: ${{ steps.determine_output_version.outputs.version }}
+      release-type: ${{ steps.determine_output_version.outputs.release-type }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: '6.x'
+          
+      - name: Determine version increment
+        id: version_increment
+        run: |
+          if [[ "${{ github.ref_name }}" == feature/* ]]; then
+            # Feature branch: always patch increment on base version
+            echo "increment=patch" >> $GITHUB_OUTPUT
+            echo "release_type=feature" >> $GITHUB_OUTPUT
+            echo "🌿 Helm Feature release - patch increment"
+          else
+            # Main branch: use user input for final release
+            echo "increment=${{ github.event.inputs.version_bump }}" >> $GITHUB_OUTPUT
+            echo "release_type=final" >> $GITHUB_OUTPUT
+            echo "🚀 Helm Final release - ${{ github.event.inputs.version_bump }} increment"
+          fi
+          
+      - name: Create Helm GitVersion configuration
+        run: |
+          echo "Current branch: ${{ github.ref_name }}"
+          echo "Increment type: ${{ steps.version_increment.outputs.increment }}"
+          
+          # Erstelle GitVersion.yml für Helm Charts mit chart-v prefix
+          cat > GitVersion.yml << EOF
+          tag-prefix: chart-v
+          mode: ContinuousDeployment
+          branches:
+            main:
+              label: ''
+              increment: ${{ steps.version_increment.outputs.increment }}
+            feature:
+              regex: ^feature/(?<BranchName>.+)$
+              label: '{BranchName}'
+              increment: Inherit
+          EOF
+          
+          echo "Generated Helm GitVersion.yml:"
+          cat GitVersion.yml
+          
+      - name: Execute GitVersion for Helm
+        id: helm_gitversion
+        uses: gittools/actions/gitversion/execute@v4
+        
+      - name: Display GitVersion outputs
+        run: |
+          echo "SemVer: ${{ steps.helm_gitversion.outputs.semVer }}"
+          echo "MajorMinorPatch: ${{ steps.helm_gitversion.outputs.majorMinorPatch }}"
+          echo "Major: ${{ steps.helm_gitversion.outputs.major }}"
+          echo "Minor: ${{ steps.helm_gitversion.outputs.minor }}"
+          echo "Patch: ${{ steps.helm_gitversion.outputs.patch }}"
+          echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
+          
+      - name: Determine output version
+        id: determine_output_version
+        run: |
+          if [[ "${{ github.ref_name }}" == feature/* ]]; then
+            # Feature branch: use semVer for pre-release tags like chart-v1.0.1-foo.1
+            VERSION="${{ steps.helm_gitversion.outputs.semVer }}"
+            RELEASE_TYPE="feature"
+            echo "Using semVer for feature branch: $VERSION"
+          else
+            # Main branch: use majorMinorPatch for clean final releases like chart-v1.0.0
+            VERSION="${{ steps.helm_gitversion.outputs.majorMinorPatch }}"
+            RELEASE_TYPE="final"
+            echo "Using majorMinorPatch for main branch: $VERSION"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+          echo "Final Helm Chart version: chart-v$VERSION (type: $RELEASE_TYPE)"
+
+  create-helm-tag-and-release:
+    needs: [calculate-helm-version]
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Create and push Helm chart tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = `chart-v${{ needs.calculate-helm-version.outputs.version }}`;
+            const sha = context.sha;
+            
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${tag}`,
+                sha: sha
+              });
+              console.log(`✅ Helm Chart tag ${tag} created successfully`);
+            } catch (error) {
+              if (error.status === 422) {
+                console.log(`⚠️ Helm Chart tag ${tag} already exists`);
+              } else {
+                throw error;
+              }
+            }
+          
+      - name: Create Helm Chart GitHub Release
+        if: needs.calculate-helm-version.outputs.release-type == 'final' && github.ref_name == 'main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: chart-v${{ needs.calculate-helm-version.outputs.version }}
+          name: Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+          body: |
+            ## Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+            
+            This is a **${{ needs.calculate-helm-version.outputs.release-type }}** Helm chart release triggered manually.
+            
+            ### Version Increment
+            - **Type**: ${{ github.event.inputs.version_bump || 'patch (feature)' }}
+            - **Branch**: ${{ github.ref_name }}
+            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
+            
+            ### Current Chart Details
+            
+            Based on the current `helm/Chart.yaml`:
+            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
+            - **App Version**: `$(cat helm/Chart.yaml | grep 'appVersion:' | sed 's/appVersion: *"*\([^"]*\)"*/\1/')`
+            
+            ### Installation
+            ```bash
+            helm upgrade --install dummy-app ./helm \
+              --set image.tag=$(cat helm/Chart.yaml | grep 'appVersion:' | sed 's/appVersion: *"*\([^"]*\)"*/\1/') \
+              --set image.repository=${{ secrets.DOCKERHUB_USER || 'username' }}/${{ github.event.repository.name }}
+            ```
+            
+            ### Helm Package
+            ```bash
+            helm package ./helm --version ${{ needs.calculate-helm-version.outputs.version }}
+            ```
+            
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/chart-v${{ needs.calculate-helm-version.outputs.version }}...HEAD
+          draft: false
+          prerelease: ${{ needs.calculate-helm-version.outputs.release-type == 'feature' }}
+          
+      - name: Create Feature Helm Chart Release
+        if: needs.calculate-helm-version.outputs.release-type == 'feature'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: chart-v${{ needs.calculate-helm-version.outputs.version }}
+          name: Helm Chart Feature Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+          body: |
+            ## Helm Chart Feature Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+            
+            This is a **feature** Helm chart release from branch `${{ github.ref_name }}`.
+            
+            ### Version Details
+            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
+            - **Release Type**: Feature (pre-release)
+            - **Branch**: `${{ github.ref_name }}`
+            
+            ### Installation (Feature)
+            ```bash
+            helm upgrade --install dummy-app-${{ github.ref_name }} ./helm \
+              --set image.tag=$(cat helm/Chart.yaml | grep 'appVersion:' | sed 's/appVersion: *"*\([^"]*\)"*/\1/') \
+              --set image.repository=${{ secrets.DOCKERHUB_USER || 'username' }}/${{ github.event.repository.name }}
+            ```
+            
+            **Note**: This is a pre-release version for testing purposes.
+          draft: false
+          prerelease: true
