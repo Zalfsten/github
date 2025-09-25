@@ -236,33 +236,7 @@ jobs:
             
             **Full Changelog**: https://github.com/${{ github.repository }}/compare/chart-v${{ needs.calculate-helm-version.outputs.version }}...HEAD
           draft: false
-          prerelease: ${{ needs.calculate-helm-version.outputs.release-type == 'feature' }}
-          
-      - name: Create Feature Helm Chart Release
-        if: needs.calculate-helm-version.outputs.release-type == 'feature'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.create_tags.outputs.release_tag }}
-          name: Helm Chart Feature Release v${{ needs.calculate-helm-version.outputs.version }}
-          files: ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz
-          body: |
-            ## Helm Chart Feature Release chart-v${{ needs.calculate-helm-version.outputs.version }}
-            
-            This is a **feature** Helm chart release from branch `${{ github.ref_name }}`.
-            
-            ### Version Details
-            - **Chart Version**: `${{ needs.calculate-helm-version.outputs.version }}`
-            - **Release Type**: Feature (pre-release)
-            - **Branch**: `${{ github.ref_name }}`
-            
-            ### Installation (Feature)
-            ```bash
-            helm upgrade --install fairagro-middleware-${{ github.ref_name }} ./helm \
-              --set image.tag=${{ steps.extract_app_version.outputs.app_version }} \
-              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
-            ```
-            
-            **Note**: This is a pre-release version for testing purposes.
+          prerelease: false
 
   push-helm-chart:
     needs: [calculate-helm-version, create-helm-tag-and-release]
