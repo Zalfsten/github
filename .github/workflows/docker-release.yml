@@ -228,8 +228,9 @@ jobs:
             echo "Feature release - Git tag created but no GitHub release"
           fi
           
-      - name: Create GitHub Release
+      - name: Create GitHub Release (Draft)
         if: needs.calculate-version.outputs.release-type == 'final'
+        id: draft_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
@@ -255,16 +256,19 @@ jobs:
           generate_release_notes: true
           append_body: true
           fail_on_unmatched_files: true
-          generate_source_archive: false
           
       - name: Finalize Release
         if: needs.calculate-version.outputs.release-type == 'final'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.create_tag.outputs.release-tag }}
-          name: "docker-v${{ needs.calculate-version.outputs.version }}"
-          draft: false
-          generate_source_archive: false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the release ID from the draft release we just created
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id')
+          
+          # Convert draft to final release
+          gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
+            --method PATCH \
+            --field draft=false
 
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-release]
