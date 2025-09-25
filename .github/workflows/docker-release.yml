@@ -194,6 +194,12 @@ jobs:
           output-file: sbom.spdx.json
           format: spdx-json
           
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-v${{ needs.calculate-version.outputs.version }}
+          path: sbom.spdx.json
+          
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
@@ -291,6 +297,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-v${{ needs.calculate-version.outputs.version }}
+          path: .
+          
       - name: Create and push tag
         uses: actions/github-script@v7
         with:
@@ -320,6 +332,7 @@ jobs:
         with:
           tag_name: v${{ needs.calculate-version.outputs.version }}
           name: Release v${{ needs.calculate-version.outputs.version }}
+          files: sbom.spdx.json
           body: |
             ## Software Release v${{ needs.calculate-version.outputs.version }}
             
@@ -345,7 +358,7 @@ jobs:
             
             ### Security
             - ✅ Image scanned with Trivy
-            - ✅ SBOM (Software Bill of Materials) generated
+            - ✅ SBOM (Software Bill of Materials) generated and attached
             - ✅ Single-platform build for performance
             - ✅ Security-focused base image
             
