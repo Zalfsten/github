@@ -128,7 +128,6 @@ jobs:
           make_latest: true
           generate_release_notes: true
           append_body: true
-          generate_source_archive: false
           
       - name: Finalize Release
         if: steps.configure.outputs.release-type == 'final'
@@ -137,7 +136,6 @@ jobs:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
           name: "chart-v${{ steps.create_tag.outputs.chart-version }}"
           draft: false
-          generate_source_archive: false
 
       - name: Push to DockerHub
         if: always()

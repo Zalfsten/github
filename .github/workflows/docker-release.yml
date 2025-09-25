@@ -255,7 +255,6 @@ jobs:
           generate_release_notes: true
           append_body: true
           fail_on_unmatched_files: true
-          generate_source_archive: false
           
       - name: Finalize Release
         if: needs.calculate-version.outputs.release-type == 'final'
@@ -264,7 +263,6 @@ jobs:
           tag_name: ${{ steps.create_tag.outputs.release-tag }}
           name: "docker-v${{ needs.calculate-version.outputs.version }}"
           draft: false
-          generate_source_archive: false
 
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-release]
