@@ -85,7 +85,7 @@ jobs:
           echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
           echo "Major: ${{ steps.gitversion.outputs.major }}"
           echo "Minor: ${{ steps.gitversion.outputs.minor }}"
-          echo "Patch: ${{ steps.gitversiUpload Trivy scan resultson.outputs.patch }}"
+          echo "Patch: ${{ steps.gitversion.outputs.patch }}"
           echo "Selected increment: ${{ steps.version_increment.outputs.increment }}"
           
       - name: Determine output version
@@ -112,7 +112,6 @@ jobs:
     
     permissions:
       contents: read
-      secrets: read
       
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
