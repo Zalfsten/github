@@ -123,27 +123,60 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Create and push Helm chart tag
+        id: create_tags
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = `chart-v${{ needs.calculate-helm-version.outputs.version }}`;
+            const version = `${{ needs.calculate-helm-version.outputs.version }}`;
             const sha = context.sha;
             
+            // Version-based tag for GitVersion
+            const versionTag = `chart-v${version}`;
+            
+            // Timestamp-based tag for chronological GitHub Release sorting
+            const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 13); // YYYYMMDDHHMMSS
+            const releaseTag = `chart-${timestamp}-v${version}`;
+            
+            console.log(`Creating tags:`);
+            console.log(`- Version tag: ${versionTag}`);
+            console.log(`- Release tag: ${releaseTag}`);
+            
+            // Create version tag
             try {
               await github.rest.git.createRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: `refs/tags/${tag}`,
+                ref: `refs/tags/${versionTag}`,
                 sha: sha
               });
-              console.log(`✅ Helm Chart tag ${tag} created successfully`);
+              console.log(`✅ Version tag ${versionTag} created successfully`);
             } catch (error) {
               if (error.status === 422) {
-                console.log(`⚠️ Helm Chart tag ${tag} already exists`);
+                console.log(`⚠️ Version tag ${versionTag} already exists`);
               } else {
                 throw error;
               }
             }
+            
+            // Create timestamp-based release tag
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${releaseTag}`,
+                sha: sha
+              });
+              console.log(`✅ Release tag ${releaseTag} created successfully`);
+            } catch (error) {
+              if (error.status === 422) {
+                console.log(`⚠️ Release tag ${releaseTag} already exists`);
+              } else {
+                throw error;
+              }
+            }
+            
+            // Export for use in GitHub Release
+            core.setOutput('release_tag', releaseTag);
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -170,8 +203,8 @@ jobs:
         if: needs.calculate-helm-version.outputs.release-type == 'final' && github.ref_name == 'main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: chart-v${{ needs.calculate-helm-version.outputs.version }}
-          name: Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+          tag_name: ${{ steps.create_tags.outputs.release_tag }}
+          name: Helm Chart Release v${{ needs.calculate-helm-version.outputs.version }}
           files: ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz
           body: |
             ## Helm Chart Release chart-v${{ needs.calculate-helm-version.outputs.version }}
@@ -209,8 +242,8 @@ jobs:
         if: needs.calculate-helm-version.outputs.release-type == 'feature'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: chart-v${{ needs.calculate-helm-version.outputs.version }}
-          name: Helm Chart Feature Release chart-v${{ needs.calculate-helm-version.outputs.version }}
+          tag_name: ${{ steps.create_tags.outputs.release_tag }}
+          name: Helm Chart Feature Release v${{ needs.calculate-helm-version.outputs.version }}
           files: ${{ env.IMAGE_NAME }}-${{ needs.calculate-helm-version.outputs.version }}.tgz
           body: |
             ## Helm Chart Feature Release chart-v${{ needs.calculate-helm-version.outputs.version }}
