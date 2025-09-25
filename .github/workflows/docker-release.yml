@@ -210,17 +210,25 @@ jobs:
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           
-      - name: Create timestamp tag and release
-        id: create_tag
+      - name: Generate timestamp tag
+        id: generate_timestamp
         run: |
-          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
-          git config --local user.name "${{ env.GIT_USER_NAME }}"
-          
-          # Create timestamp tag (for chronological sorting and releases)
-          RELEASE_TAG="$(date +%Y%m%d%H%M%S)-docker-v${{ needs.calculate-version.outputs.version }}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          RELEASE_TAG="${TIMESTAMP}-docker-v${{ needs.calculate-version.outputs.version }}"
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
           echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Release tag exists"
+          echo "Generated tag: $RELEASE_TAG"
           
+      - name: Create timestamp tag
+        id: create_tag
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ steps.generate_timestamp.outputs.release-tag }}
+          tag_prefix: ""
+          
+      - name: Log release info
+        run: |
           # Only create GitHub release for final releases (main branch)
           if [[ "${{ needs.calculate-version.outputs.release-type }}" == "final" ]]; then
             echo "Creating GitHub release for final release"
@@ -233,7 +241,7 @@ jobs:
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.create_tag.outputs.release-tag }}
+          tag_name: ${{ steps.generate_timestamp.outputs.release-tag }}
           name: "docker-v${{ needs.calculate-version.outputs.version }}"
           body: |
             ## Docker Release v${{ needs.calculate-version.outputs.version }}
@@ -262,19 +270,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Looking for draft release with tag: ${{ steps.create_tag.outputs.release-tag }}"
+          echo "🔍 Looking for draft release with tag: ${{ steps.generate_timestamp.outputs.release-tag }}"
           
           # Give GitHub API a moment to index the new release
           sleep 5
           
           # Try to get the release ID from the draft release we just created
-          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id' 2>/dev/null); then
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.generate_timestamp.outputs.release-tag }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
             
             # Search for the release by version in all releases
-            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.create_tag.outputs.release-tag }}") | .id')
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.generate_timestamp.outputs.release-tag }}") | .id')
             
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
