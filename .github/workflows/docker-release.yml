@@ -13,6 +13,14 @@ on:
         - minor  
         - patch
 
+env:
+  GIT_USER_NAME: GitHub Pipeline
+  GIT_USER_EMAIL: github_pipeline@fairagro.net
+  IMAGE_NAME: fairagro_advanced_middleware_api
+  DOCKERHUB_NAMESPACE: zalf
+  IMAGE_TITLE: FairAgro Advanced Middleware API
+  IMAGE_DESCRIPTION: Advanced middleware API for FairAgro platform
+
 jobs:
   calculate-version:
     runs-on: ubuntu-latest
@@ -147,13 +155,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && secrets.DOCKERHUB_USER || 'local' }}/${{ github.event.repository.name }}
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || format('local/{0}', env.IMAGE_NAME) }}
           tags: |
             type=raw,value=${{ needs.calculate-version.outputs.version }}
             type=raw,value=latest,enable=${{ needs.calculate-version.outputs.release-type == 'final' }}
           labels: |
-            org.opencontainers.image.title=Dummy App
-            org.opencontainers.image.description=A dummy Node.js application for CI/CD testing
+            org.opencontainers.image.title=${{ env.IMAGE_TITLE }}
+            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
@@ -169,9 +177,9 @@ jobs:
           push: ${{ steps.dockerhub_secrets.outputs.available == 'true' }}
           load: true
           tags: |
-            local/${{ github.event.repository.name }}:${{ needs.calculate-version.outputs.version }}
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}:{2}', secrets.DOCKERHUB_USER, github.event.repository.name, needs.calculate-version.outputs.version) || '' }}
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && needs.calculate-version.outputs.release-type == 'final' && format('{0}/{1}:latest', secrets.DOCKERHUB_USER, github.event.repository.name) || '' }}
+            local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
+            ${{ steps.dockerhub_secrets.outputs.available == 'true' && needs.calculate-version.outputs.release-type == 'final' && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=v${{ needs.calculate-version.outputs.version }}
@@ -181,14 +189,14 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: local/${{ github.event.repository.name }}:${{ needs.calculate-version.outputs.version }}
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
           
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: local/${{ github.event.repository.name }}:${{ needs.calculate-version.outputs.version }}
+          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           
@@ -206,7 +214,7 @@ jobs:
             echo "### ✅ Docker Image Built and Pushed to DockerHub" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Image Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **DockerHub**: ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **DockerHub**: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Tag**: ${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Digest**: ${{ steps.build.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
@@ -214,7 +222,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
             echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           else
             echo "### ⚠️ Docker Image Built Locally (Not Pushed)" >> $GITHUB_STEP_SUMMARY
@@ -222,7 +230,7 @@ jobs:
             echo "The Docker image was built successfully but **not pushed** to DockerHub because the required secrets are missing." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Image Details" >> $GITHUB_STEP_SUMMARY
-            echo "- **Local Tag**: local/${{ github.event.repository.name }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Local Tag**: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Release Type**: ${{ needs.calculate-version.outputs.release-type }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Platform**: linux/amd64 (local build)" >> $GITHUB_STEP_SUMMARY
             echo "- **Security Scan**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
@@ -292,10 +300,10 @@ jobs:
             
             ${{ secrets.DOCKERHUB_USER && format('```bash
             docker pull {0}/{1}:{2}
-            ```', secrets.DOCKERHUB_USER, github.event.repository.name, needs.calculate-version.outputs.version) || '**Note**: Docker image was built locally but not pushed to DockerHub (missing secrets).' }}
+            ```', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '**Note**: Docker image was built locally but not pushed to DockerHub (missing secrets).' }}
             
             ### Image Details
-            ${{ secrets.DOCKERHUB_USER && format('- **DockerHub**: `{0}/{1}`', secrets.DOCKERHUB_USER, github.event.repository.name) || '- **DockerHub**: Not configured (missing secrets)' }}
+            ${{ secrets.DOCKERHUB_USER && format('- **DockerHub**: `{0}/{1}`', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '- **DockerHub**: Not configured (missing secrets)' }}
             - **Tag**: `${{ needs.calculate-version.outputs.version }}`
             ${{ needs.build-docker-image.outputs.image-digest && format('- **Digest**: `{0}`', needs.build-docker-image.outputs.image-digest) || '' }}
             - **Platforms**: linux/amd64
@@ -303,15 +311,15 @@ jobs:
             ### Security
             - ✅ Image scanned with Trivy
             - ✅ SBOM (Software Bill of Materials) generated
-            - ✅ Multi-platform build
-            - ✅ Distroless base for security
+            - ✅ Single-platform build for performance
+            - ✅ Security-focused base image
             
             ### Helm Deployment
             ${{ secrets.DOCKERHUB_USER && format('```bash
-            helm upgrade --install dummy-app ./helm \
+            helm upgrade --install fairagro-middleware ./helm \
               --set image.tag={0} \
               --set image.repository={1}/{2}
-            ```', needs.calculate-version.outputs.version, secrets.DOCKERHUB_USER, github.event.repository.name) || '**Note**: Configure DockerHub secrets to enable Helm deployment with DockerHub images.' }}
+            ```', needs.calculate-version.outputs.version, env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '**Note**: Configure DockerHub secrets to enable Helm deployment with DockerHub images.' }}
             
             **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.calculate-version.outputs.version }}...HEAD
           draft: false
@@ -343,8 +351,8 @@ jobs:
           
       - name: Commit Helm chart changes
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --local user.name "${{ env.GIT_USER_NAME }}"
           
           if git diff --quiet helm/Chart.yaml; then
             echo "No changes to commit"
