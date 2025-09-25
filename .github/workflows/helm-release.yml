@@ -49,16 +49,22 @@ jobs:
           
           # Create GitVersion config
           cat > GitVersion.yml << EOF
-          tag-prefix: chart-v
           mode: ContinuousDeployment
+          tag-prefix: ''
+          tag-pattern: '^(?<timestamp>\d{14})-chart-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$'
+          semantic-version-format: Strict
           branches:
             main:
               label: ''
               increment: $INCREMENT
+              regex: ^master$|^main$
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: '{BranchName}'
               increment: Inherit
+          ignore:
+            sha: []
+            commits-before: 2000-01-01T00:00:00
           EOF
           
           echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
@@ -71,19 +77,18 @@ jobs:
           version: '3.14.0'
           
       - name: Create Helm release
-        if: github.ref_name == 'main' && github.event.inputs.version_bump != ''
         run: |
           # Determine version
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            VERSION="${{ steps.gitversion.outputs.semVer }}"
+            VERSION="${{ steps.gitversion.outputs.SemVer }}"
           else
-            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
           fi
           
           # Extract appVersion
           APP_VERSION=$(grep '^appVersion:' helm/Chart.yaml | sed 's/appVersion: *"*\([^"]*\)"*/\1/')
           
-          # Create timestamp tag
+          # Create timestamp tag (always for all releases)
           RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
@@ -92,20 +97,27 @@ jobs:
           # Package Helm chart
           helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"
           
-          # Create release (draft first, then finalize)
-          gh release create "$RELEASE_TAG" "${{ env.IMAGE_NAME }}-$VERSION.tgz" \
-            --title "Helm Chart Release v$VERSION" \
-            --notes "## Helm Chart Release v$VERSION
+          # Only create GitHub release for final releases (main branch)
+          if [[ "$RELEASE_TYPE" == "final" ]]; then
+            echo "Creating GitHub release for final Helm release"
             
-          **Chart Version**: $VERSION  
-          **App Version**: $APP_VERSION
-          
-          \`\`\`bash
-          helm upgrade --install fairagro-middleware ./helm \\
-            --set image.tag=$APP_VERSION \\
-            --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
-          \`\`\`" \
-            --draft || gh release edit "$RELEASE_TAG" --draft=false
+            # Create release (draft first, then finalize)
+            gh release create "$RELEASE_TAG" "${{ env.IMAGE_NAME }}-$VERSION.tgz" \
+              --title "Helm Chart Release v$VERSION" \
+              --notes "## Helm Chart Release v$VERSION
+              
+            **Chart Version**: $VERSION  
+            **App Version**: $APP_VERSION
+            
+            \`\`\`bash
+            helm upgrade --install fairagro-middleware ./helm \\
+              --set image.tag=$APP_VERSION \\
+              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+            \`\`\`" \
+              --draft || gh release edit "$RELEASE_TAG" --draft=false
+          else
+            echo "Feature release - Git tag created but no GitHub release"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
@@ -118,8 +130,8 @@ jobs:
             exit 0
           fi
           if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            VERSION="${{ steps.gitversion.outputs.semVer }}"
-            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            VERSION="${{ steps.gitversion.outputs.SemVer }}"
+            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
             
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
             helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
