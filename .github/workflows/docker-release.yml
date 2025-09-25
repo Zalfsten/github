@@ -20,6 +20,15 @@ env:
   DOCKERHUB_NAMESPACE: zalf
   IMAGE_TITLE: FairAgro Advanced Middleware API
   IMAGE_DESCRIPTION: Advanced middleware API for FairAgro platform
+  # Derived static variables
+  GITVERSION_TAG_PREFIX: '.*-docker-v'
+  DOCKER_PLATFORMS: linux/amd64
+  SBOM_FORMAT: spdx-json
+  # Conditional variables using expressions
+  RELEASE_TYPE: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'final' }}
+  VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
+  CREATE_GITHUB_RELEASE: ${{ !contains(github.ref_name, 'feature/') }}
+  IS_FEATURE_BRANCH: ${{ startsWith(github.ref_name, 'feature/') }}
 
 jobs:
   calculate-version:
@@ -27,8 +36,11 @@ jobs:
     permissions:
       contents: read
     outputs:
-      version: ${{ steps.set_version.outputs.version }}
-      release-type: ${{ steps.configure.outputs.release-type }}
+      version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
+      release-type: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'final' }}
+    env:
+      # Job-specific environment variables  
+      VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
       
     steps:
       - uses: actions/checkout@v4
@@ -39,57 +51,35 @@ jobs:
         with:
           versionSpec: 6.4.x
           
-      - name: Configure GitVersion and calculate version
-        id: configure
-        run: |
-          # Debug branch detection
-          echo "Current branch: ${{ github.ref_name }}"
-          
-          # Determine increment and release type
-          if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            INCREMENT="patch"
-            RELEASE_TYPE="feature"
-            echo "🌿 Feature release - patch increment"
-          else
-            INCREMENT="${{ github.event.inputs.version_bump || 'patch' }}"
-            RELEASE_TYPE="final"
-            echo "🚀 Final release - $INCREMENT increment"
-          fi
-          
-          echo "Determined RELEASE_TYPE: $RELEASE_TYPE"
-          
-          # Create GitVersion config
-          cat > GitVersion.yml << EOF
-          mode: ContinuousDeployment
-          tag-prefix: '.*-docker-v'
-          semantic-version-format: Strict
-          branches:
-            main:
-              label: ''
-              increment: $INCREMENT
-            feature:
-              regex: ^feature/(?<BranchName>.+)$
-              label: '{BranchName}'
-              increment: Inherit
-          EOF
-          
-          echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
-          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+      - name: Create GitVersion config
+        uses: DamianReeves/write-file-action@master
+        with:
+          path: GitVersion.yml
+          write-mode: overwrite
+          contents: |
+            mode: ContinuousDeployment
+            tag-prefix: '${{ env.GITVERSION_TAG_PREFIX }}'
+            semantic-version-format: Strict
+            branches:
+              main:
+                label: ''
+                increment: ${{ env.VERSION_INCREMENT }}
+              feature:
+                regex: ^feature/(?<BranchName>.+)$
+                label: '{BranchName}'
+                increment: Inherit
           
       - name: Execute GitVersion
         id: gitversion
         uses: gittools/actions/gitversion/execute@v4
         
-      - name: Set final version
-        id: set_version
+      - name: Debug version info
         run: |
-          if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            VERSION="${{ steps.gitversion.outputs.semVer }}"
-          else
-            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Final version: v$VERSION"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Is feature branch: ${{ env.IS_FEATURE_BRANCH }}"
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "Final version will be: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}"
 
   build-docker-image:
     needs: [calculate-version]
@@ -98,11 +88,14 @@ jobs:
     permissions:
       contents: read
       security-events: write  # Required for SARIF upload
+    
+    env:
+      DOCKERHUB_AVAILABLE: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_TOKEN != '' }}
       
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tags: ${{ steps.build.outputs.tags }}
-      dockerhub-pushed: ${{ steps.dockerhub_secrets.outputs.available }}
+      dockerhub-pushed: ${{ env.DOCKERHUB_AVAILABLE }}
       
     steps:
       - name: Checkout code
@@ -112,18 +105,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
         
       - name: Check DockerHub secrets
-        id: dockerhub_secrets
         run: |
-          if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            echo "available=true" >> $GITHUB_OUTPUT
+          if [[ "${{ env.DOCKERHUB_AVAILABLE }}" == "true" ]]; then
             echo "✅ DockerHub secrets are available"
           else
-            echo "available=false" >> $GITHUB_OUTPUT
             echo "⚠️ DockerHub secrets not available - will only push to GitHub Container Registry"
           fi
 
       - name: Log in to DockerHub
-        if: steps.dockerhub_secrets.outputs.available == 'true'
+        if: ${{ env.DOCKERHUB_AVAILABLE == 'true' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
@@ -134,7 +124,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || format('local/{0}', env.IMAGE_NAME) }}
+            ${{ env.DOCKERHUB_AVAILABLE == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || format('local/{0}', env.IMAGE_NAME) }}
           tags: |
             type=raw,value=${{ needs.calculate-version.outputs.version }}
             type=raw,value=latest,enable=${{ needs.calculate-version.outputs.release-type == 'final' }}
@@ -153,12 +143,12 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ steps.dockerhub_secrets.outputs.available == 'true' }}
+          push: ${{ env.DOCKERHUB_AVAILABLE == 'true' }}
           load: true
           tags: |
             local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
-            ${{ steps.dockerhub_secrets.outputs.available == 'true' && needs.calculate-version.outputs.release-type == 'final' && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
+            ${{ env.DOCKERHUB_AVAILABLE == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
+            ${{ (env.DOCKERHUB_AVAILABLE == 'true' && needs.calculate-version.outputs.release-type == 'final') && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=v${{ needs.calculate-version.outputs.version }}
@@ -199,6 +189,10 @@ jobs:
     permissions:
       contents: write
     
+    env:
+      TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
+      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-docker-v${{ needs.calculate-version.outputs.version }}
+    
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,21 +204,12 @@ jobs:
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           
-      - name: Generate timestamp tag
-        id: generate_timestamp
-        run: |
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          RELEASE_TAG="${TIMESTAMP}-docker-v${{ needs.calculate-version.outputs.version }}"
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-          echo "Generated tag: $RELEASE_TAG"
-          
       - name: Create timestamp tag
         id: create_tag
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          custom_tag: ${{ steps.generate_timestamp.outputs.release-tag }}
+          custom_tag: ${{ env.RELEASE_TAG }}
           tag_prefix: ""
           
       - name: Log release info
@@ -241,12 +226,12 @@ jobs:
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.generate_timestamp.outputs.release-tag }}
+          tag_name: ${{ env.RELEASE_TAG }}
           name: "docker-v${{ needs.calculate-version.outputs.version }}"
           body: |
             ## Docker Release v${{ needs.calculate-version.outputs.version }}
 
-            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
+            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
             
             - ✅ Security scan completed (see Security tab)
             - ✅ SBOM attached (sbom.spdx.json)
@@ -255,7 +240,7 @@ jobs:
             ### Installation
             ```bash
             # Pull and run the Docker image
-            docker pull ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Image not available on DockerHub' }}
+            docker pull ${{ needs.build-docker-image.outputs.dockerhub-pushed && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || 'Image not available on DockerHub' }}
             ```
           files: |
             sbom.spdx.json
@@ -270,19 +255,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Looking for draft release with tag: ${{ steps.generate_timestamp.outputs.release-tag }}"
+          echo "🔍 Looking for draft release with tag: ${{ env.RELEASE_TAG }}"
           
           # Give GitHub API a moment to index the new release
           sleep 5
           
           # Try to get the release ID from the draft release we just created
-          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.generate_timestamp.outputs.release-tag }} --jq '.id' 2>/dev/null); then
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
             
             # Search for the release by version in all releases
-            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.generate_timestamp.outputs.release-tag }}") | .id')
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ env.RELEASE_TAG }}") | .id')
             
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
@@ -301,7 +286,7 @@ jobs:
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-release]
     runs-on: ubuntu-latest
-    if: needs.create-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed == 'true'
+    if: needs.create-release.result == 'success' && needs.build-docker-image.outputs.dockerhub-pushed
     
     permissions:
       contents: write
