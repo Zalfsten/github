@@ -201,6 +201,13 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           
+      - name: Scan image for display (table format)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          format: 'table'
+          output: 'trivy-results.txt'
+          
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -210,27 +217,28 @@ jobs:
       - name: Display Trivy scan results
         if: always()
         run: |
-          # Install trivy CLI for SARIF conversion
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp v0.48.3
+          echo "## 🔍 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+          echo "Results uploaded to **Security** tab → **Code scanning**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Convert SARIF to table format
-          if [[ -f "trivy-results.sarif" ]]; then
-            /tmp/trivy convert --format table --output trivy-table.txt trivy-results.sarif
-            
-            echo "## 🔍 Security Scan Results" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Trivy Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
-            echo "Results uploaded to **Security** tab → **Code scanning**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ -f "trivy-results.txt" ]]; then
             echo '```' >> $GITHUB_STEP_SUMMARY
-            cat trivy-table.txt >> $GITHUB_STEP_SUMMARY
+            cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           else
-            echo "## 🔍 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Table format scan results not found" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ -f "trivy-results.sarif" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Trivy Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ SARIF file not found - scan may have failed" >> $GITHUB_STEP_SUMMARY
-            echo "Results uploaded to **Security** tab → **Code scanning**" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Detailed SARIF report uploaded to GitHub Security tab**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**View detailed results:** Repository → Security → Code scanning" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ SARIF file not found - detailed scan may have failed" >> $GITHUB_STEP_SUMMARY
           fi
           
       - name: Create image summary
