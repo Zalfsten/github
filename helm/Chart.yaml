@@ -3,7 +3,7 @@ name: fairagro-advanced-middleware-api
 description: A Helm chart for FairAgro Advanced Middleware API deployment
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "6.1.9-foo.1"
 
 keywords:
   - fairagro
