@@ -239,6 +239,13 @@ jobs:
           files: sbom.spdx.json
           draft: true
           make_latest: true
+          
+      - name: Finalize Release
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.create_tag.outputs.release-tag }}
+          draft: false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

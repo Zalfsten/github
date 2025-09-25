@@ -126,6 +126,13 @@ jobs:
           files: ${{ env.IMAGE_NAME }}-${{ steps.create_tag.outputs.chart-version }}.tgz
           draft: true
           make_latest: true
+          
+      - name: Finalize Release
+        if: steps.configure.outputs.release-type == 'final'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.create_tag.outputs.release-tag }}
+          draft: false
 
       - name: Push to DockerHub
         if: always()
