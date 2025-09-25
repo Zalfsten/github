@@ -130,33 +130,11 @@ jobs:
             const version = `${{ needs.calculate-helm-version.outputs.version }}`;
             const sha = context.sha;
             
-            // Version-based tag for GitVersion
-            const versionTag = `chart-v${version}`;
-            
             // Timestamp-based tag for chronological GitHub Release sorting
             const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); // YYYYMMDDHHMMSS
             const releaseTag = `${timestamp}-chart-v${version}`;
             
-            console.log(`Creating tags:`);
-            console.log(`- Version tag: ${versionTag}`);
-            console.log(`- Release tag: ${releaseTag}`);
-            
-            // Create version tag
-            try {
-              await github.rest.git.createRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `refs/tags/${versionTag}`,
-                sha: sha
-              });
-              console.log(`✅ Version tag ${versionTag} created successfully`);
-            } catch (error) {
-              if (error.status === 422) {
-                console.log(`⚠️ Version tag ${versionTag} already exists`);
-              } else {
-                throw error;
-              }
-            }
+            console.log(`Creating tag: ${releaseTag}`);
             
             // Create timestamp-based release tag
             try {
