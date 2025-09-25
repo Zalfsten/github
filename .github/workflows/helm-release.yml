@@ -64,6 +64,7 @@ jobs:
           EOF
           
           echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
+          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
           
       - uses: gittools/actions/gitversion/execute@v4
         id: gitversion
@@ -73,12 +74,13 @@ jobs:
           version: '3.14.0'
           
       - name: Create Helm release
+        id: create_tag
         run: |
           # Determine version
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            VERSION="${{ steps.gitversion.outputs.semVer }}"
+            VERSION="${{ steps.gitversion.outputs.SemVer }}"
           else
-            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
           fi
           
           # Extract appVersion
@@ -86,6 +88,10 @@ jobs:
           
           # Create timestamp tag (always for all releases)
           RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
+          echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "chart-version=$VERSION" >> $GITHUB_OUTPUT
+          echo "app-version=$APP_VERSION" >> $GITHUB_OUTPUT
+          
           git config --local user.email "${{ env.GIT_USER_EMAIL }}"
           git config --local user.name "${{ env.GIT_USER_NAME }}"
           git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Release tag exists"
@@ -96,32 +102,31 @@ jobs:
           # Only create GitHub release for final releases (main branch)
           if [[ "$RELEASE_TYPE" == "final" ]]; then
             echo "Creating GitHub release for final Helm release"
-            
-            # Create release (draft first, then finalize)
-            gh release create "$RELEASE_TAG" "${{ env.IMAGE_NAME }}-$VERSION.tgz" \
-              --target "${{ github.sha }}" \
-              --title "Helm Chart Release v$VERSION" \
-              --notes "## Helm Chart Release v$VERSION
-              
-            **Chart Version**: $VERSION  
-            **App Version**: $APP_VERSION
-            
-            \`\`\`bash
-            helm upgrade --install fairagro-middleware ./helm \\
-              --set image.tag=$APP_VERSION \\
-              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
-            \`\`\`" \
-              --draft || gh release edit "$RELEASE_TAG" --draft=false
-              --set image.tag=$APP_VERSION \\
-              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
-            \`\`\`" \
-              --draft || gh release edit "$RELEASE_TAG" --draft=false
           else
             echo "Feature release - Git tag created but no GitHub release"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
+      - name: Create GitHub Release
+        if: steps.configure.outputs.release-type == 'final'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.create_tag.outputs.release-tag }}
+          name: "Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}"
+          body: |
+            ## Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}
+            
+            **Chart Version**: ${{ steps.create_tag.outputs.chart-version }}  
+            **App Version**: ${{ steps.create_tag.outputs.app-version }}
+            
+            ```bash
+            helm upgrade --install fairagro-middleware ./helm \
+              --set image.tag=${{ steps.create_tag.outputs.app-version }} \
+              --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+            ```
+          files: ${{ env.IMAGE_NAME }}-${{ steps.create_tag.outputs.chart-version }}.tgz
+          draft: true
+          make_latest: true
+
       - name: Push to DockerHub
         if: always()
         run: |
