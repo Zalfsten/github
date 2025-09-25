@@ -134,8 +134,8 @@ jobs:
             const versionTag = `chart-v${version}`;
             
             // Timestamp-based tag for chronological GitHub Release sorting
-            const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 13); // YYYYMMDDHHMMSS
-            const releaseTag = `chart-${timestamp}-v${version}`;
+            const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); // YYYYMMDDHHMMSS
+            const releaseTag = `${timestamp}-chart-v${version}`;
             
             console.log(`Creating tags:`);
             console.log(`- Version tag: ${versionTag}`);

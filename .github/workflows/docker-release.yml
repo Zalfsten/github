@@ -314,8 +314,8 @@ jobs:
           VERSION_TAG="v${{ needs.calculate-version.outputs.version }}"
           
           # Timestamp-based tag for chronological GitHub Release sorting
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          RELEASE_TAG="docker-${TIMESTAMP}-v${{ needs.calculate-version.outputs.version }}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          RELEASE_TAG="${TIMESTAMP}-docker-v${{ needs.calculate-version.outputs.version }}"
           
           echo "Creating tags:"
           echo "- Version tag: $VERSION_TAG"
