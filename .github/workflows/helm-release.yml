@@ -57,14 +57,10 @@ jobs:
             main:
               label: ''
               increment: $INCREMENT
-              regex: ^master$|^main$
             feature:
               regex: ^feature/(?<BranchName>.+)$
               label: '{BranchName}'
               increment: Inherit
-          ignore:
-            sha: []
-            commits-before: 2000-01-01T00:00:00
           EOF
           
           echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
@@ -80,9 +76,9 @@ jobs:
         run: |
           # Determine version
           if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            VERSION="${{ steps.gitversion.outputs.SemVer }}"
+            VERSION="${{ steps.gitversion.outputs.semVer }}"
           else
-            VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
+            VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
           fi
           
           # Extract appVersion
@@ -130,8 +126,8 @@ jobs:
             exit 0
           fi
           if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            VERSION="${{ steps.gitversion.outputs.SemVer }}"
-            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
+            VERSION="${{ steps.gitversion.outputs.semVer }}"
+            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
             
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
             helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
