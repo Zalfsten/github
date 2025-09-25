@@ -264,28 +264,31 @@ jobs:
         run: |
           echo "🔍 Looking for draft release with tag: ${{ steps.create_tag.outputs.release-tag }}"
           
-          # List all releases to debug
-          echo "📋 All releases:"
-          gh api repos/${{ github.repository }}/releases --jq '.[].tag_name'
+          # Give GitHub API a moment to index the new release
+          sleep 5
           
           # Try to get the release ID from the draft release we just created
           if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id' 2>/dev/null); then
-            echo "✅ Found release ID: $RELEASE_ID"
-            
-            # Convert draft to final release
-            gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
-              --method PATCH \
-              --field draft=false
-            echo "🎉 Release finalized successfully"
+            echo "✅ Found release ID via tag: $RELEASE_ID"
           else
-            echo "❌ Release not found with tag: ${{ steps.create_tag.outputs.release-tag }}"
-            echo "🔍 Searching for releases containing version ${{ needs.calculate-version.outputs.version }}..."
+            echo "⚠️ Release not found via tag, searching in all releases..."
             
-            # Try to find release by version in name or tag
-            gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name | contains("${{ needs.calculate-version.outputs.version }}")) | {id, tag_name, name, draft}'
+            # Search for the release by version in all releases
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.create_tag.outputs.release-tag }}") | .id')
             
-            exit 1
+            if [[ -n "$RELEASE_ID" ]]; then
+              echo "✅ Found release ID via search: $RELEASE_ID"
+            else
+              echo "❌ Release not found at all!"
+              exit 1
+            fi
           fi
+          
+          # Convert draft to final release
+          gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
+            --method PATCH \
+            --field draft=false
+          echo "🎉 Release finalized successfully"
 
   update-helm-chart:
     needs: [calculate-version, build-docker-image, create-release]
