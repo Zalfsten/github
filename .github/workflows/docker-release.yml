@@ -231,9 +231,9 @@ jobs:
           echo "Version: v${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
 
   create-release:
-    needs: [calculate-version, build-docker-image]
+    needs: [calculate-version, build-docker-image, container-structure-test]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.result == 'success'
+    if: needs.build-docker-image.result == 'success' && needs.container-structure-test.result == 'success'
 
     permissions:
       contents: write
@@ -344,9 +344,9 @@ jobs:
           echo "🎉 Release finalized successfully"
 
   update-helm-chart:
-    needs: [calculate-version, build-docker-image]
+    needs: [calculate-version, build-docker-image, container-structure-test]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.outputs.dockerhub-pushed == 'true'
+    if: needs.build-docker-image.outputs.dockerhub-pushed == 'true' && needs.container-structure-test.result == 'success'
 
     permissions:
       contents: write
