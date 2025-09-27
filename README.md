@@ -16,7 +16,7 @@ Dieses Repository implementiert einen automatischen Semantic Versioning Workflow
 3. Erstelle einen Pull Request nach `main`
 4. **Wichtig**: Füge eines der folgenden Labels zum PR hinzu:
    - `major version`: für breaking changes (1.0.0 → 2.0.0)
-   - `minor version`: für neue Features (1.0.0 → 1.1.0)  
+   - `minor version`: für neue Features (1.0.0 → 1.1.0)
    - `patch version`: für Bugfixes (1.0.0 → 1.0.1)
 
 ### Automatische Versionierung
@@ -34,7 +34,7 @@ Beim Mergen eines Pull Requests:
 Für manuelle Releases kann der `version-bump` Workflow auch manuell ausgelöst werden:
 
 1. Gehe zu Actions → Version Bump and Release
-2. Klicke auf "Run workflow"  
+2. Klicke auf "Run workflow"
 3. Wähle den Versions-Typ (major/minor/patch)
 
 ## Workflows
@@ -46,7 +46,7 @@ Für manuelle Releases kann der `version-bump` Workflow auch manuell ausgelöst 
 
 ### 2. Version Bump and Release
 
-- **File:** `.github/workflows/version-bump.yml`  
+- **File:** `.github/workflows/version-bump.yml`
 - **Purpose:** Nutzt GitVersion um automatisch die Versionsnummer basierend auf den PR-Labels zu erhöhen. Erstellt Git-Tags und GitHub Releases.
 
 ## Labels

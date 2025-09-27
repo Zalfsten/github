@@ -1,54 +1,60 @@
-# Multi-stage build for a simple Node.js application
-FROM node:18-alpine AS builder
+# Multi-stage build for Python application using uv
+FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install dependencies
-RUN npm install --only=production
+# Copy dependency files for uv
+COPY pyproject.toml uv.lock README.md ./
 
-# Copy source code
-COPY . .
+# Install dependencies with uv
+RUN uv sync --frozen --no-cache
+
+# Copy source
+COPY app/ ./app/
 
 # Production stage
-FROM node:18-alpine AS production
+FROM python:3.13-slim AS production
 
-# Build argument for app version
+# Build arg for version
 ARG APP_VERSION=development
 
 WORKDIR /app
 
 # Install curl for health checks
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+RUN addgroup --gid 1001 --system appuser && \
+    adduser --uid 1001 --system --group appuser
 
-# Copy built application
-COPY --from=builder --chown=nodejs:nodejs /app .
+# Copy Python environment from builder (uv virtual environment)
+COPY --from=builder /app/.venv /app/.venv
 
-# Create a simple app if package.json doesn't exist
-RUN if [ ! -f package.json ]; then \
-    echo '{"name":"dummy-app","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js"}}' > package.json && \
-    echo 'const express = require("express"); const app = express(); app.get("/", (req, res) => res.json({message: "Hello World", version: process.env.APP_VERSION || "unknown"})); app.get("/health", (req, res) => res.json({status: "healthy"})); app.listen(3000, () => console.log("Server running on port 3000"));' > server.js && \
-    npm install express; \
-    fi
+# Copy app with correct ownership
+COPY --from=builder --chown=appuser:appuser /app/app ./app
 
-# Set version environment variable
+# Make sure we use the virtual environment
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Environment variables
 ENV APP_VERSION=${APP_VERSION}
+ENV FLASK_APP=app/app.py
+ENV FLASK_ENV=production
+ENV PYTHONPATH=/app
 
 # Switch to non-root user
-USER nodejs
+USER appuser
 
 # Expose port
-EXPOSE 3000
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
-# Start the application
-CMD ["npm", "start"]
+# Start app
+CMD ["python", "app/app.py"]
