@@ -10,6 +10,9 @@ jobs:
   docker-build-test:
     name: Docker Build and Test
     uses: ./.github/workflows/docker-build-reusable.yml
+    permissions:
+      contents: read
+      security-events: write
     with:
       push_to_registry: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       create_artifacts: true

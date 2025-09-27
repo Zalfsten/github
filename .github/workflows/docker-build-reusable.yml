@@ -38,8 +38,6 @@ env:
 jobs:
   calculate-version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
       version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
       release-type: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'main' }}
@@ -82,9 +80,6 @@ jobs:
   build-docker-image:
     needs: calculate-version
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       dockerhub-pushed: ${{ steps.push.outputs.pushed }}
