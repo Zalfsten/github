@@ -1,0 +1,82 @@
+schemaVersion: "2.0.0"
+
+# Metadata tests
+metadataTest:
+  # Test image environment variables
+  envVars:
+    - key: "APP_VERSION"
+      value: "development"
+    - key: "FLASK_APP"  
+      value: "app/app.py"
+    - key: "FLASK_ENV"
+      value: "production"
+    - key: "PYTHONPATH"
+      value: "/app"
+  
+  # Test exposed ports
+  exposedPorts: ["8080"]
+  
+  # Test working directory
+  workdir: "/app"
+
+# File existence tests  
+fileExistenceTests:
+  - name: "Flask app exists"
+    path: "/app/app/app.py"
+    shouldExist: true
+    uid: 1001
+    gid: 1001
+  
+  - name: "Virtual environment exists"
+    path: "/app/.venv"
+    shouldExist: true
+  
+  - name: "Python executable in venv"
+    path: "/app/.venv/bin/python"
+    shouldExist: true
+  
+  - name: "Flask installed in venv"
+    path: "/app/.venv/lib/python3.13/site-packages/flask"
+    shouldExist: true
+  
+  - name: "Curl installed for health checks"
+    path: "/usr/bin/curl"
+    shouldExist: true
+    permissions: "-rwxr-xr-x"
+
+# File content tests
+fileContentTests:
+  - name: "Python version check"
+    path: "/app/.venv/pyvenv.cfg" 
+    expectedContents: ["version_info = 3.13"]
+
+# Command tests
+commandTests:
+  - name: "Python version"
+    command: "/app/.venv/bin/python"
+    args: ["--version"]
+    expectedOutput: ["Python 3.13"]
+    
+  - name: "Flask is importable"
+    command: "/app/.venv/bin/python"
+    args: ["-c", "import flask; print('Flask OK')"]
+    expectedOutput: ["Flask OK"]
+    
+  - name: "App directory accessible"
+    command: "ls"
+    args: ["/app/app"]
+    expectedOutput: ["app.py"]
+  
+  - name: "Non-root user check"
+    command: "whoami" 
+    expectedOutput: ["appuser"]
+    
+  - name: "Python can import app modules"
+    command: "/app/.venv/bin/python"
+    args: ["-c", "import sys; sys.path.insert(0, '/app'); import app.app; print('App import OK')"]
+    expectedOutput: ["App import OK"]
+
+  - name: "Flask app syntax check"
+    command: "/app/.venv/bin/python"
+    args: ["-m", "py_compile", "/app/app/app.py"]
+    expectedOutput: []
