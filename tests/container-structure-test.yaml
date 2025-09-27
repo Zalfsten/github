@@ -4,8 +4,6 @@ schemaVersion: "2.0.0"
 metadataTest:
   # Test image environment variables
   envVars:
-    - key: "APP_VERSION"
-      value: "development"
     - key: "FLASK_APP"
       value: "app/app.py"
     - key: "FLASK_ENV"
