@@ -14,7 +14,6 @@ RUN uv sync --frozen --no-cache
 
 # Copy source
 COPY app/ ./app/
-COPY main.py ./
 
 # Production stage
 FROM python:3.13-slim AS production
@@ -37,7 +36,6 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy app with correct ownership
 COPY --from=builder --chown=appuser:appuser /app/app ./app
-COPY --from=builder --chown=appuser:appuser /app/main.py ./
 
 # Make sure we use the virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
