@@ -90,3 +90,5 @@ jobs:
         echo "| mypy | ✅ Type checking | Static type analysis |" >> $GITHUB_STEP_SUMMARY
         echo "| bandit | ✅ Security | Security vulnerability scan |" >> $GITHUB_STEP_SUMMARY
         echo "| pytest | ✅ Unit tests | Test execution with coverage |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**🔐 Secret Protection:** GitHub Secret Scanning enabled (Repository Settings)" >> $GITHUB_STEP_SUMMARY
