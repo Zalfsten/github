@@ -29,7 +29,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --extra test
-        uv add --dev pylint black isort mypy bandit safety
+        uv add --dev pylint black isort mypy bandit
 
     - name: Code formatting check with Black
       run: |
@@ -49,7 +49,7 @@ jobs:
     - name: Type checking with mypy
       run: |
         uv run mypy app/ --ignore-missing-imports --strict-optional
-      continue-on-error: true  # mypy can be strict, allow to fail initially
+      continue-on-error: false  # mypy is working well, no need to allow failures
 
     - name: Security check with bandit
       run: |
@@ -79,7 +79,6 @@ jobs:
           coverage.xml
           htmlcov/
           bandit-report.json
-          safety-report.json
 
     - name: Create quality summary
       if: always()
@@ -90,7 +89,6 @@ jobs:
         echo "| Black | ✅ Formatting | Code formatting check |" >> $GITHUB_STEP_SUMMARY
         echo "| isort | ✅ Import sorting | Import organization check |" >> $GITHUB_STEP_SUMMARY
         echo "| pylint | ✅ Code quality | Static analysis (min score: 8.0) |" >> $GITHUB_STEP_SUMMARY
-        echo "| mypy | ⚠️ Type hints | Type checking (advisory) |" >> $GITHUB_STEP_SUMMARY
+        echo "| mypy | ✅ Type checking | Static type analysis |" >> $GITHUB_STEP_SUMMARY
         echo "| bandit | ✅ Security | Security vulnerability scan |" >> $GITHUB_STEP_SUMMARY
-        echo "| safety | ⚠️ Dependencies | Dependency vulnerability check |" >> $GITHUB_STEP_SUMMARY
         echo "| pytest | ✅ Unit tests | Test execution with coverage |" >> $GITHUB_STEP_SUMMARY
