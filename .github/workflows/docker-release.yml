@@ -10,7 +10,7 @@ on:
         type: choice
         options:
         - major
-        - minor  
+        - minor
         - patch
 
 env:
@@ -39,18 +39,18 @@ jobs:
       version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
       release-type: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'final' }}
     env:
-      # Job-specific environment variables  
+      # Job-specific environment variables
       VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
-      
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          
+
       - uses: gittools/actions/gitversion/setup@v4
         with:
           versionSpec: 6.4.x
-          
+
       - name: Create GitVersion config
         uses: DamianReeves/write-file-action@master
         with:
@@ -68,11 +68,11 @@ jobs:
                 regex: ^feature/(?<BranchName>.+)$
                 label: '{BranchName}'
                 increment: Inherit
-          
+
       - name: Execute GitVersion
         id: gitversion
         uses: gittools/actions/gitversion/execute@v4
-        
+
       - name: Debug version info
         run: |
           echo "Branch: ${{ github.ref_name }}"
@@ -84,26 +84,26 @@ jobs:
   build-docker-image:
     needs: [calculate-version]
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
       security-events: write  # Required for SARIF upload
-    
+
     env:
       DOCKERHUB_AVAILABLE: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_TOKEN != '' }}
-      
+
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-tags: ${{ steps.build.outputs.tags }}
       dockerhub-pushed: ${{ env.DOCKERHUB_AVAILABLE }}
-      
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
+
       - name: Check DockerHub secrets
         run: |
           if [[ "${{ env.DOCKERHUB_AVAILABLE }}" == "true" ]]; then
@@ -118,7 +118,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -136,7 +136,7 @@ jobs:
             org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.revision=${{ github.sha }}
-            
+
       - name: Build Docker image
         id: build
         uses: docker/build-push-action@v5
@@ -154,7 +154,7 @@ jobs:
             APP_VERSION=v${{ needs.calculate-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          
+
       - name: Generate SBOM (final releases only)
         if: needs.calculate-version.outputs.release-type == 'final'
         uses: anchore/sbom-action@v0
@@ -162,48 +162,97 @@ jobs:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
-          
+
       - name: Upload SBOM artifact (final releases only)
         if: needs.calculate-version.outputs.release-type == 'final'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
           path: sbom.spdx.json
-          
+
       - uses: aquasecurity/trivy-action@master
         with:
           image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           format: sarif
           output: trivy-results.sarif
-          
+
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: trivy-results.sarif
 
+  container-structure-test:
+    needs: [calculate-version, build-docker-image]
+    runs-on: ubuntu-latest
+    if: needs.build-docker-image.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: test-image:latest
+          build-args: |
+            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
+
+      - name: Download Container Structure Test
+        run: |
+          curl -LO https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64
+          chmod +x container-structure-test-linux-amd64
+
+      - name: Run Container Structure Tests
+        run: |
+          ./container-structure-test-linux-amd64 test \
+            --image test-image:latest \
+            --config tests/container-structure-test.yaml \
+            --output junit \
+            --test-report container-structure-test-report.xml
+
+      - name: Upload Container Structure Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-structure-test-report
+          path: container-structure-test-report.xml
+
+      - name: Container Structure Test Summary
+        if: always()
+        run: |
+          echo "## 🐳 Container Structure Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "Image: test-image:latest" >> $GITHUB_STEP_SUMMARY
+          echo "Config: tests/container-structure-test.yaml" >> $GITHUB_STEP_SUMMARY
+          echo "Version: v${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+
   create-release:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
     if: needs.build-docker-image.result == 'success'
-    
+
     permissions:
       contents: write
-    
+
     env:
       TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
       RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-docker-v${{ needs.calculate-version.outputs.version }}
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          
+
       - name: Download SBOM artifact (final releases only)
         if: needs.calculate-version.outputs.release-type == 'final'
         uses: actions/download-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
-          
+
       - name: Create timestamp tag
         id: create_tag
         uses: mathieudutour/github-tag-action@v6.2
@@ -211,7 +260,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           custom_tag: ${{ env.RELEASE_TAG }}
           tag_prefix: ""
-          
+
       - name: Log release info
         run: |
           # Only create GitHub release for final releases (main branch)
@@ -220,7 +269,7 @@ jobs:
           else
             echo "Feature release - Git tag created but no GitHub release"
           fi
-          
+
       - name: Create GitHub Release (Draft)
         if: needs.calculate-version.outputs.release-type == 'final'
         id: draft_release
@@ -233,11 +282,11 @@ jobs:
 
             **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
             **Image Digest**: `${{ needs.build-docker-image.outputs.image-digest }}`
-            
+
             - ✅ Security scan completed (see Security tab)
             - ✅ SBOM attached (sbom.spdx.json)
             - 🐳 Platform: linux/amd64
-            
+
             ### Installation
             ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && '```bash
             # Pull and run the Docker image
@@ -260,26 +309,26 @@ jobs:
           generate_release_notes: true
           append_body: true
           fail_on_unmatched_files: true
-          
+
       - name: Finalize Release
         if: needs.calculate-version.outputs.release-type == 'final'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "🔍 Looking for draft release with tag: ${{ env.RELEASE_TAG }}"
-          
+
           # Give GitHub API a moment to index the new release
           sleep 5
-          
+
           # Try to get the release ID from the draft release we just created
           if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
-            
+
             # Search for the release by version in all releases
             RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ env.RELEASE_TAG }}") | .id')
-            
+
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
             else
@@ -287,7 +336,7 @@ jobs:
               exit 1
             fi
           fi
-          
+
           # Convert draft to final release
           gh api repos/${{ github.repository }}/releases/$RELEASE_ID \
             --method PATCH \
@@ -298,19 +347,19 @@ jobs:
     needs: [calculate-version, build-docker-image]
     runs-on: ubuntu-latest
     if: needs.build-docker-image.outputs.dockerhub-pushed == 'true'
-    
+
     permissions:
       contents: write
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          
+
       - name: Update Chart.yaml appVersion
         run: |
           sed -i "s/^appVersion:.*/appVersion: \"${{ needs.calculate-version.outputs.version }}\"/" helm/Chart.yaml
-          
+
       - name: Commit and push Chart.yaml changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
