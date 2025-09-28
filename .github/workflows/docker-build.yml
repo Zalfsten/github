@@ -5,15 +5,232 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_call:
+    inputs:
+      push_to_registry:
+        description: 'Whether to push to DockerHub registry'
+        required: false
+        type: boolean
+        default: false
+      create_artifacts:
+        description: 'Whether to create SBOM and test artifacts'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      version:
+        description: 'Calculated version'
+        value: ${{ jobs.calculate-version.outputs.version }}
+      image-digest:
+        description: 'Docker image digest'
+        value: ${{ jobs.build-docker-image.outputs.image-digest }}
+      dockerhub-pushed:
+        description: 'Whether image was pushed to DockerHub'
+        value: ${{ jobs.build-docker-image.outputs.dockerhub-pushed }}
+
+env:
+  GIT_USER_NAME: GitHub Pipeline
+  GIT_USER_EMAIL: github_pipeline@fairagro.net
+  IMAGE_NAME: fairagro_advanced_middleware_api
+  DOCKERHUB_NAMESPACE: zalf
+  IMAGE_TITLE: FairAgro Advanced Middleware API
+  IMAGE_DESCRIPTION: Advanced middleware API for FairAgro platform
+  GITVERSION_TAG_PREFIX: '.*-docker-v'
+  DOCKER_PLATFORMS: linux/amd64
+  SBOM_FORMAT: spdx-json
 
 jobs:
-  docker-build-test:
-    name: Docker Build and Test
-    uses: ./.github/workflows/docker-build-reusable.yml
+  calculate-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
+      release-type: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'main' }}
+    env:
+      IS_FEATURE_BRANCH: ${{ startsWith(github.ref_name, 'feature/') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: '6.x'
+
+      - name: Configure GitVersion
+        run: |
+          cat > GitVersion.yml << EOF
+          mode: ContinuousDeployment
+          tag-prefix: '.*-docker-v'
+          semantic-version-format: Strict
+          branches:
+            main:
+              label: ''
+              increment: Patch
+            feature:
+              regex: ^feature/(?<BranchName>.+)$
+              label: '{BranchName}'
+              increment: Inherit
+          EOF
+
+      - uses: gittools/actions/gitversion/execute@v4
+        id: gitversion
+
+      - name: Display version info
+        run: |
+          echo "🏷️ Calculated Version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}"
+          echo "📦 Build Context: ${{ contains(github.ref_name, 'feature/') && 'Feature branch' || 'Main branch' }}"
+
+  build-docker-image:
+    needs: calculate-version
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
-    with:
-      push_to_registry: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      create_artifacts: true
-    secrets: inherit
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      dockerhub-pushed: ${{ steps.push.outputs.pushed }}
+
+    env:
+      DOCKERHUB_AVAILABLE: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_TOKEN != '' }}
+      PUSH_TO_REGISTRY: ${{ inputs.push_to_registry || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        if: env.DOCKERHUB_AVAILABLE == 'true' && env.PUSH_TO_REGISTRY == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.DOCKERHUB_AVAILABLE == 'true' && env.PUSH_TO_REGISTRY == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
+          tags: |
+            type=raw,value=${{ needs.calculate-version.outputs.version }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, 'feature/') }}
+          labels: |
+            org.opencontainers.image.title=${{ env.IMAGE_TITLE }}
+            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ env.DOCKERHUB_AVAILABLE == 'true' && env.PUSH_TO_REGISTRY == 'true' }}
+          load: true
+          tags: |
+            local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+            ${{ env.DOCKERHUB_AVAILABLE == 'true' && env.PUSH_TO_REGISTRY == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
+            ${{ env.DOCKERHUB_AVAILABLE == 'true' && env.PUSH_TO_REGISTRY == 'true' && !contains(github.ref_name, 'feature/') && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
+          build-args: |
+            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        if: ${{ inputs.create_artifacts != false }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          format: ${{ env.SBOM_FORMAT }}
+          output-file: sbom.json
+
+      - name: Upload SBOM artifact
+        if: ${{ inputs.create_artifacts != false }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ needs.calculate-version.outputs.version }}
+          path: sbom.json
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Set push status
+        id: push
+        run: |
+          if [[ "${{ env.DOCKERHUB_AVAILABLE }}" == "true" && "${{ env.PUSH_TO_REGISTRY }}" == "true" ]]; then
+            echo "pushed=true" >> $GITHUB_OUTPUT
+            echo "✅ Image pushed to DockerHub"
+          else
+            echo "pushed=false" >> $GITHUB_OUTPUT
+            echo "⏭️ DockerHub push skipped"
+          fi
+
+  container-structure-test:
+    needs: [calculate-version, build-docker-image]
+    runs-on: ubuntu-latest
+    if: needs.build-docker-image.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: test-image:latest
+          build-args: |
+            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
+
+      - name: Download Container Structure Test
+        run: |
+          curl -LO https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64
+          chmod +x container-structure-test-linux-amd64
+
+      - name: Run Container Structure Tests
+        run: |
+          ./container-structure-test-linux-amd64 test \
+            --image test-image:latest \
+            --config tests/container-structure-test.yaml \
+            --output junit \
+            --test-report container-structure-test-report.xml
+
+      - name: Upload Container Structure Test Results
+        if: ${{ inputs.create_artifacts != false }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-structure-test-report
+          path: container-structure-test-report.xml
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🐳 Container Build & Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: test-image:latest" >> $GITHUB_STEP_SUMMARY
+          echo "**Config**: tests/container-structure-test.yaml" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: v${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Context**: ${{ github.event_name }} on ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
