@@ -24,223 +24,209 @@ env:
   GITVERSION_TAG_PREFIX: '.*-docker-v'
   DOCKER_PLATFORMS: linux/amd64
   SBOM_FORMAT: spdx-json
-  # Conditional variables using expressions
-  RELEASE_TYPE: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'final' }}
-  VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
-  CREATE_GITHUB_RELEASE: ${{ !contains(github.ref_name, 'feature/') }}
+  # Conditional variables using expressions - SINGLE SOURCE OF TRUTH
   IS_FEATURE_BRANCH: ${{ startsWith(github.ref_name, 'feature/') }}
+  IS_MAIN_BRANCH: ${{ github.ref_name == 'main' }}
+  RELEASE_TYPE: ${{ startsWith(github.ref_name, 'feature/') && 'feature' || 'final' }}
+  VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
+  CREATE_GITHUB_RELEASE: ${{ github.ref_name == 'main' }}
 
 jobs:
-  calculate-version:
+  docker-build-test:
+    name: Docker Build and Test
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      push_to_registry: true
+      save_image: true  # Save image for security scanning
+      version_bump: ${{ startsWith(github.ref_name, 'feature/') && 'patch' || (github.event.inputs.version_bump || 'patch') }}
+    secrets: inherit
+
+  security-scan-release:
+    needs: docker-build-test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
-      release-type: ${{ contains(github.ref_name, 'feature/') && 'feature' || 'final' }}
-    env:
-      # Job-specific environment variables
-      VERSION_INCREMENT: ${{ github.event.inputs.version_bump || 'patch' }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: gittools/actions/gitversion/setup@v4
-        with:
-          versionSpec: 6.4.x
-
-      - name: Create GitVersion config
-        uses: DamianReeves/write-file-action@master
-        with:
-          path: GitVersion.yml
-          write-mode: overwrite
-          contents: |
-            mode: ContinuousDeployment
-            tag-prefix: '${{ env.GITVERSION_TAG_PREFIX }}'
-            semantic-version-format: Strict
-            branches:
-              main:
-                label: ''
-                increment: ${{ env.VERSION_INCREMENT }}
-              feature:
-                regex: ^feature/(?<BranchName>.+)$
-                label: '{BranchName}'
-                increment: Inherit
-
-      - name: Execute GitVersion
-        id: gitversion
-        uses: gittools/actions/gitversion/execute@v4
-
-      - name: Debug version info
-        run: |
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Is feature branch: ${{ env.IS_FEATURE_BRANCH }}"
-          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
-          echo "MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
-          echo "Final version will be: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}"
-
-  build-docker-image:
-    needs: [calculate-version]
-    runs-on: ubuntu-latest
-
+    if: needs.docker-build-test.result == 'success'
+    
     permissions:
       contents: read
       security-events: write  # Required for SARIF upload
-
-    env:
-      DOCKERHUB_AVAILABLE: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_TOKEN != '' }}
-
-    outputs:
-      image-digest: ${{ steps.build.outputs.digest }}
-      image-tags: ${{ steps.build.outputs.tags }}
-      dockerhub-pushed: ${{ env.DOCKERHUB_AVAILABLE }}
-
+      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-${{ needs.docker-build-test.outputs.version }}
 
-      - name: Check DockerHub secrets
+      - name: Load Docker image
         run: |
-          if [[ "${{ env.DOCKERHUB_AVAILABLE }}" == "true" ]]; then
-            echo "✅ DockerHub secrets are available"
-          else
-            echo "⚠️ DockerHub secrets not available - will only push to GitHub Container Registry"
-          fi
-
-      - name: Log in to DockerHub
-        if: ${{ env.DOCKERHUB_AVAILABLE == 'true' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ env.DOCKERHUB_AVAILABLE == 'true' && format('{0}/{1}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || format('local/{0}', env.IMAGE_NAME) }}
-          tags: |
-            type=raw,value=${{ needs.calculate-version.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.calculate-version.outputs.release-type == 'final' }}
-          labels: |
-            org.opencontainers.image.title=${{ env.IMAGE_TITLE }}
-            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
-            org.opencontainers.image.url=https://github.com/${{ github.repository }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=v${{ needs.calculate-version.outputs.version }}
-            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
-            org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Build Docker image
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          push: ${{ env.DOCKERHUB_AVAILABLE == 'true' }}
-          load: true
-          tags: |
-            local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
-            ${{ env.DOCKERHUB_AVAILABLE == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '' }}
-            ${{ (env.DOCKERHUB_AVAILABLE == 'true' && needs.calculate-version.outputs.release-type == 'final') && format('{0}/{1}:latest', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME) || '' }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Generate SBOM (final releases only)
-        if: needs.calculate-version.outputs.release-type == 'final'
+          docker load < docker-image.tar.gz
+          echo "✅ Docker image loaded: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}"
+      - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
+          
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
+          output-file: sbom.cyclonedx.json
+          format: cyclonedx-json
+          
+      - name: Analyze SBOM completeness
+        run: |
+          echo "## 📋 SBOM Analysis for Python/uv Application" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Count different package types
+          SPDX_PACKAGES=$(jq '.packages | length' sbom.spdx.json 2>/dev/null || echo "0")
+          CYCLONE_COMPONENTS=$(jq '.components | length' sbom.cyclonedx.json 2>/dev/null || echo "0")
+          
+          echo "### 📊 Package Counts" >> $GITHUB_STEP_SUMMARY
+          echo "- **SPDX Format**: $SPDX_PACKAGES packages" >> $GITHUB_STEP_SUMMARY
+          echo "- **CycloneDX Format**: $CYCLONE_COMPONENTS components" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Analyze package types specifically for Python
+          if [[ -f "sbom.spdx.json" ]]; then
+            echo "### 🐍 Python Dependencies (Top 15)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("python|py|flask|werkzeug|jinja|click"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -15 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            echo "### 📦 System Packages (Debian/APT)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("lib|curl|apt|deb"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -10 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # License analysis
+            echo "### 📄 License Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION") | .licenseConcluded' sbom.spdx.json | sort | uniq -c | sort -nr | head -10 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Check for uv specifically
+            UV_FOUND=$(jq -r '.packages[] | select(.name != null and (.name | test("uv"; "i"))) | .name' sbom.spdx.json | wc -l)
+            if [[ "$UV_FOUND" -gt 0 ]]; then
+              echo "✅ **uv package manager detected in SBOM**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ **uv package manager not detected in SBOM** (expected limitation)" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💡 SBOM Usage Tips" >> $GITHUB_STEP_SUMMARY
+            echo "- **Vulnerability Scanning**: \`grype sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **License Analysis**: \`scancode-toolkit sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Supply Chain**: Use for SLSA compliance and audit requirements" >> $GITHUB_STEP_SUMMARY
+            echo "- **Download**: Available as artifact and attached to this release" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Vulnerability scan with Grype
+        run: |
+          # Install Grype for SBOM vulnerability scanning
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          
+          # Scan SBOM for vulnerabilities
+          echo "## 🛡️ SBOM Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Generate both table output for summary and SARIF for GitHub Security
+          if grype sbom.spdx.json -o table > grype-results.txt 2>&1; then
+            # Generate SARIF output for GitHub Security tab
+            grype sbom.spdx.json -o sarif > grype-results.sarif 2>/dev/null || echo "SARIF generation failed"
+            
+            echo "### 📊 Vulnerability Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -20 grype-results.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Count vulnerabilities by severity
+            CRITICAL=$(grep -c "Critical" grype-results.txt || echo "0")
+            HIGH=$(grep -c "High" grype-results.txt || echo "0") 
+            MEDIUM=$(grep -c "Medium" grype-results.txt || echo "0")
+            LOW=$(grep -c "Low" grype-results.txt || echo "0")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Severity Breakdown" >> $GITHUB_STEP_SUMMARY
+            echo "- 🔴 **Critical**: $CRITICAL" >> $GITHUB_STEP_SUMMARY
+            echo "- 🟠 **High**: $HIGH" >> $GITHUB_STEP_SUMMARY  
+            echo "- 🟡 **Medium**: $MEDIUM" >> $GITHUB_STEP_SUMMARY
+            echo "- 🟢 **Low**: $LOW" >> $GITHUB_STEP_SUMMARY
+            
+            # Check if SARIF file was created
+            if [[ -f "grype-results.sarif" ]]; then
+              echo "- 📊 **SARIF Report**: Generated for GitHub Security tab" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Grype scan failed or no vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+          fi
 
-      - name: Upload SBOM artifact (final releases only)
-        if: needs.calculate-version.outputs.release-type == 'final'
+      - name: Upload Grype SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype-results.sarif
+          category: grype-sbom-scan
+        continue-on-error: true
+
+      - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sbom-v${{ needs.calculate-version.outputs.version }}
-          path: sbom.spdx.json
+          name: sbom-v${{ needs.docker-build-test.outputs.version }}
+          path: |
+            sbom.spdx.json
+            sbom.cyclonedx.json
+            grype-results.txt
+            grype-results.sarif
+            trivy-sbom-results.sarif
 
-      - uses: aquasecurity/trivy-action@master
+      - name: Security scan with Trivy (Image)
+        uses: aquasecurity/trivy-action@master
         with:
-          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
           format: sarif
-          output: trivy-results.sarif
+          output: trivy-image-results.sarif
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Security scan with Trivy (SBOM)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: sbom
+          input: sbom.spdx.json
+          format: sarif
+          output: trivy-sbom-results.sarif
+          scan-ref: sbom.spdx.json
+
+      - name: Upload Trivy Image SARIF results
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: trivy-results.sarif
+          sarif_file: trivy-image-results.sarif
+          category: trivy-image-scan
 
-  container-structure-test:
-    needs: [calculate-version, build-docker-image]
-    runs-on: ubuntu-latest
-    if: needs.build-docker-image.result == 'success'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build image for testing
-        uses: docker/build-push-action@v5
+      - name: Upload Trivy SBOM SARIF results
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          context: .
-          load: true
-          tags: test-image:latest
-          build-args: |
-            APP_VERSION=v${{ needs.calculate-version.outputs.version }}
-
-      - name: Download Container Structure Test
-        run: |
-          curl -LO https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64
-          chmod +x container-structure-test-linux-amd64
-
-      - name: Run Container Structure Tests
-        run: |
-          ./container-structure-test-linux-amd64 test \
-            --image test-image:latest \
-            --config tests/container-structure-test.yaml \
-            --output junit \
-            --test-report container-structure-test-report.xml
-
-      - name: Upload Container Structure Test Results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: container-structure-test-report
-          path: container-structure-test-report.xml
-
-      - name: Container Structure Test Summary
-        if: always()
-        run: |
-          echo "## 🐳 Container Structure Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "Image: test-image:latest" >> $GITHUB_STEP_SUMMARY
-          echo "Config: tests/container-structure-test.yaml" >> $GITHUB_STEP_SUMMARY
-          echo "Version: v${{ needs.calculate-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          sarif_file: trivy-sbom-results.sarif
+          category: trivy-sbom-scan
+        continue-on-error: true
 
   create-release:
-    needs: [calculate-version, build-docker-image, container-structure-test]
+    needs: [docker-build-test, security-scan-release]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.result == 'success' && needs.container-structure-test.result == 'success'
+    if: needs.docker-build-test.result == 'success' && needs.security-scan-release.result == 'success' && !startsWith(github.ref_name, 'feature/')
 
     permissions:
       contents: write
 
     env:
       TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
-      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-docker-v${{ needs.calculate-version.outputs.version }}
+      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-docker-v${{ needs.docker-build-test.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -248,10 +234,10 @@ jobs:
           fetch-depth: 0
 
       - name: Download SBOM artifact (final releases only)
-        if: needs.calculate-version.outputs.release-type == 'final'
+        if: env.RELEASE_TYPE == 'final'
         uses: actions/download-artifact@v4
         with:
-          name: sbom-v${{ needs.calculate-version.outputs.version }}
+          name: sbom-v${{ needs.docker-build-test.outputs.version }}
 
       - name: Create timestamp tag
         id: create_tag
@@ -264,31 +250,31 @@ jobs:
       - name: Log release info
         run: |
           # Only create GitHub release for final releases (main branch)
-          if [[ "${{ needs.calculate-version.outputs.release-type }}" == "final" ]]; then
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "Creating GitHub release for final release"
           else
             echo "Feature release - Git tag created but no GitHub release"
           fi
 
       - name: Create GitHub Release (Draft)
-        if: needs.calculate-version.outputs.release-type == 'final'
+        if: env.RELEASE_TYPE == 'final'
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "docker-v${{ needs.calculate-version.outputs.version }}"
+          name: "docker-v${{ needs.docker-build-test.outputs.version }}"
           body: |
-            ## Docker Release v${{ needs.calculate-version.outputs.version }}
+            ## Docker Release v${{ needs.docker-build-test.outputs.version }}
 
-            **Docker Image**: ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
-            **Image Digest**: `${{ needs.build-docker-image.outputs.image-digest }}`
+            **Docker Image**: ${{ needs.docker-build-test.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.docker-build-test.outputs.version) || '⚠️ Not pushed to DockerHub (missing credentials)' }}
+            **Image Digest**: `${{ needs.docker-build-test.outputs.image-digest }}`
 
             - ✅ Security scan completed (see Security tab)
             - ✅ SBOM attached (sbom.spdx.json)
             - 🐳 Platform: linux/amd64
 
             ### Installation
-            ${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && '```bash
+            ${{ needs.docker-build-test.outputs.dockerhub-pushed == 'true' && '```bash
             # Pull and run the Docker image
             docker pull ' || '⚠️ **Image not available on DockerHub** (missing credentials)
 
@@ -297,13 +283,14 @@ jobs:
 
             ```bash
             # Build the image locally
-            git clone https://github.com/' }}${{ needs.build-docker-image.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.calculate-version.outputs.version) || format('{0}
+            git clone https://github.com/' }}${{ needs.docker-build-test.outputs.dockerhub-pushed == 'true' && format('{0}/{1}:{2}', env.DOCKERHUB_NAMESPACE, env.IMAGE_NAME, needs.docker-build-test.outputs.version) || format('{0}
             cd {1}
             git checkout {2}
-            docker build -t local/{3}:{4} .', github.repository, github.repository, github.sha, env.IMAGE_NAME, needs.calculate-version.outputs.version) }}
+            docker build -t local/{3}:{4} .', github.repository, github.repository, github.sha, env.IMAGE_NAME, needs.docker-build-test.outputs.version) }}
             ```
           files: |
             sbom.spdx.json
+            sbom.cyclonedx.json
           draft: true
           make_latest: true
           generate_release_notes: true
@@ -311,7 +298,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Finalize Release
-        if: needs.calculate-version.outputs.release-type == 'final'
+        if: env.RELEASE_TYPE == 'final'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -344,9 +331,9 @@ jobs:
           echo "🎉 Release finalized successfully"
 
   update-helm-chart:
-    needs: [calculate-version, build-docker-image, container-structure-test]
+    needs: [docker-build-test, security-scan-release]
     runs-on: ubuntu-latest
-    if: needs.build-docker-image.outputs.dockerhub-pushed == 'true' && needs.container-structure-test.result == 'success'
+    if: needs.docker-build-test.outputs.dockerhub-pushed == 'true' && needs.security-scan-release.result == 'success'
 
     permissions:
       contents: write
@@ -358,12 +345,12 @@ jobs:
 
       - name: Update Chart.yaml appVersion
         run: |
-          sed -i "s/^appVersion:.*/appVersion: \"${{ needs.calculate-version.outputs.version }}\"/" helm/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${{ needs.docker-build-test.outputs.version }}\"/" helm/Chart.yaml
 
       - name: Commit and push Chart.yaml changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(helm): update appVersion to ${{ needs.calculate-version.outputs.version }}"
+          commit_message: "chore(helm): update appVersion to ${{ needs.docker-build-test.outputs.version }}"
           file_pattern: "helm/Chart.yaml"
           commit_user_name: "${{ env.GIT_USER_NAME }}"
           commit_user_email: "${{ env.GIT_USER_EMAIL }}"
