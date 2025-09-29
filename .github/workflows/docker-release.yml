@@ -200,6 +200,7 @@ jobs:
           input: sbom.spdx.json
           format: sarif
           output: trivy-sbom-results.sarif
+          scan-ref: sbom.spdx.json
 
       - name: Upload Trivy Image SARIF results
         uses: github/codeql-action/upload-sarif@v3
