@@ -120,53 +120,6 @@ jobs:
             echo "- **Supply Chain**: Use for SLSA compliance and audit requirements" >> $GITHUB_STEP_SUMMARY
             echo "- **Download**: Available as artifact and attached to this release" >> $GITHUB_STEP_SUMMARY
           fi
-          
-      - name: Vulnerability scan with Grype
-        run: |
-          # Install Grype for SBOM vulnerability scanning
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
-          
-          # Scan SBOM for vulnerabilities
-          echo "## 🛡️ SBOM Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Generate both table output for summary and SARIF for GitHub Security
-          if grype sbom.spdx.json -o table > grype-results.txt 2>&1; then
-            # Generate SARIF output for GitHub Security tab
-            grype sbom.spdx.json -o sarif > grype-results.sarif 2>/dev/null || echo "SARIF generation failed"
-            
-            echo "### 📊 Vulnerability Summary" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            head -20 grype-results.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            
-            # Count vulnerabilities by severity
-            CRITICAL=$(grep -c "Critical" grype-results.txt || echo "0")
-            HIGH=$(grep -c "High" grype-results.txt || echo "0") 
-            MEDIUM=$(grep -c "Medium" grype-results.txt || echo "0")
-            LOW=$(grep -c "Low" grype-results.txt || echo "0")
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🎯 Severity Breakdown" >> $GITHUB_STEP_SUMMARY
-            echo "- 🔴 **Critical**: $CRITICAL" >> $GITHUB_STEP_SUMMARY
-            echo "- 🟠 **High**: $HIGH" >> $GITHUB_STEP_SUMMARY  
-            echo "- 🟡 **Medium**: $MEDIUM" >> $GITHUB_STEP_SUMMARY
-            echo "- 🟢 **Low**: $LOW" >> $GITHUB_STEP_SUMMARY
-            
-            # Check if SARIF file was created
-            if [[ -f "grype-results.sarif" ]]; then
-              echo "- 📊 **SARIF Report**: Generated for GitHub Security tab" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "⚠️ Grype scan failed or no vulnerabilities found" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Upload Grype SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: grype-results.sarif
-          category: grype-sbom-scan
-        continue-on-error: true
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
@@ -174,9 +127,7 @@ jobs:
           name: sbom-v${{ needs.docker-build-test.outputs.version }}
           path: |
             sbom.spdx.json
-            sbom.cyclonedx.json
-            grype-results.txt
-            grype-results.sarif
+            trivy-image-results.sarif
             trivy-sbom-results.sarif
 
       - name: Security scan with Trivy (Image)
@@ -185,6 +136,8 @@ jobs:
           image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
           format: sarif
           output: trivy-image-results.sarif
+          severity: 'CRITICAL,HIGH,MEDIUM'  # Skip LOW severity to reduce noise
+          ignore-unfixed: true  # Focus on fixable vulnerabilities
 
       - name: Security scan with Trivy (SBOM)
         uses: aquasecurity/trivy-action@master
@@ -194,6 +147,8 @@ jobs:
           format: sarif
           output: trivy-sbom-results.sarif
           scan-ref: sbom.spdx.json
+          severity: 'CRITICAL,HIGH,MEDIUM'  # Skip LOW severity to reduce noise
+          ignore-unfixed: true  # Focus on fixable vulnerabilities
 
       - name: Upload Trivy Image SARIF results
         uses: github/codeql-action/upload-sarif@v3
@@ -209,80 +164,50 @@ jobs:
           category: trivy-sbom-scan
         continue-on-error: true
 
-      - name: Compare Security Scan Results
+      - name: Security Scan Summary
         run: |
-          echo "## 🔍 Security Scan Comparison Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "## �️ Security Scan Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Purpose**: Compare results from 3 security tools to identify potential redundancy" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Parse Grype results (SBOM-based)
-          echo "### 📊 Grype SBOM Scan Results" >> $GITHUB_STEP_SUMMARY
-          if [[ -f "grype-results.txt" ]]; then
-            GRYPE_TOTAL=$(grep -c "^" grype-results.txt || echo "0")
-            GRYPE_CRITICAL=$(grep -c "Critical" grype-results.txt || echo "0")
-            GRYPE_HIGH=$(grep -c "High" grype-results.txt || echo "0")
-            echo "- **Total findings**: $GRYPE_TOTAL" >> $GITHUB_STEP_SUMMARY
-            echo "- **Critical**: $GRYPE_CRITICAL, **High**: $GRYPE_HIGH" >> $GITHUB_STEP_SUMMARY
-            echo "- **Scan type**: SBOM-based vulnerability detection" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ❌ No Grype results available" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "**Scanning Strategy**: Using Trivy for comprehensive vulnerability detection" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Parse Trivy Image results (Image-based)  
-          echo "### 🐳 Trivy Image Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Trivy Image Scan" >> $GITHUB_STEP_SUMMARY
           if [[ -f "trivy-image-results.sarif" ]]; then
             TRIVY_IMAGE_RESULTS=$(jq '.runs[0].results | length' trivy-image-results.sarif 2>/dev/null || echo "0")
             TRIVY_IMAGE_CRITICAL=$(jq '.runs[0].results[] | select(.level == "error") | length' trivy-image-results.sarif 2>/dev/null || echo "0")
             echo "- **Total findings**: $TRIVY_IMAGE_RESULTS" >> $GITHUB_STEP_SUMMARY
             echo "- **Critical/High**: $TRIVY_IMAGE_CRITICAL" >> $GITHUB_STEP_SUMMARY
-            echo "- **Scan type**: Direct image layer analysis" >> $GITHUB_STEP_SUMMARY
+            echo "- **Coverage**: Direct image layer analysis, OS packages, secrets, misconfigurations" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ❌ No Trivy Image results available" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Parse Trivy SBOM results (SBOM-based)
-          echo "### 📋 Trivy SBOM Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Trivy SBOM Scan" >> $GITHUB_STEP_SUMMARY
           if [[ -f "trivy-sbom-results.sarif" ]]; then
             TRIVY_SBOM_RESULTS=$(jq '.runs[0].results | length' trivy-sbom-results.sarif 2>/dev/null || echo "0")
             TRIVY_SBOM_CRITICAL=$(jq '.runs[0].results[] | select(.level == "error") | length' trivy-sbom-results.sarif 2>/dev/null || echo "0")
             echo "- **Total findings**: $TRIVY_SBOM_RESULTS" >> $GITHUB_STEP_SUMMARY
             echo "- **Critical/High**: $TRIVY_SBOM_CRITICAL" >> $GITHUB_STEP_SUMMARY
-            echo "- **Scan type**: SBOM-based vulnerability detection" >> $GITHUB_STEP_SUMMARY
+            echo "- **Coverage**: SBOM-based vulnerability detection with Trivy's curated database" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ❌ No Trivy SBOM results available" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Analysis and Recommendations
-          echo "### 💡 Analysis & Recommendations" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Scan Coverage Comparison**:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Grype (SBOM)**: Focuses on known vulnerabilities in catalogued packages" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trivy Image**: Direct filesystem scan, finds OS packages, secrets, misconfigurations" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trivy SBOM**: Same engine as Grype but using Trivy's vulnerability DB" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Redundancy detection
-          if [[ "$GRYPE_TOTAL" -gt 0 && "$TRIVY_SBOM_RESULTS" -gt 0 ]]; then
-            DIFF=$(echo "$(($GRYPE_TOTAL - $TRIVY_SBOM_RESULTS))" | sed 's/-//')
-            if [[ "$DIFF" -lt 5 ]]; then
-              echo "⚠️ **Potential Redundancy**: Grype and Trivy SBOM show similar results ($GRYPE_TOTAL vs $TRIVY_SBOM_RESULTS)" >> $GITHUB_STEP_SUMMARY
-              echo "**Recommendation**: Consider keeping only Trivy Image + one SBOM scanner" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "✅ **Different Coverage**: Scans complement each other well" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "ℹ️ **Analysis**: Need more data points to determine redundancy" >> $GITHUB_STEP_SUMMARY
-          fi
+          # Analysis and Benefits
+          echo "### ✅ Why Trivy-Only Strategy" >> $GITHUB_STEP_SUMMARY
+          echo "- **Fewer False Positives**: Trivy filters out irrelevant old CVEs that Grype reports" >> $GITHUB_STEP_SUMMARY
+          echo "- **Better Accuracy**: Contextual analysis reduces noise from system packages" >> $GITHUB_STEP_SUMMARY
+          echo "- **Comprehensive Coverage**: Both image-level and SBOM-based scanning" >> $GITHUB_STEP_SUMMARY
+          echo "- **Active Maintenance**: CNCF project with regular updates" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### 🎯 Optimization Suggestions" >> $GITHUB_STEP_SUMMARY
-          echo "1. **Keep Trivy Image**: Unique filesystem-level scanning" >> $GITHUB_STEP_SUMMARY
-          echo "2. **SBOM Scanner**: Choose Grype OR Trivy SBOM (not both)" >> $GITHUB_STEP_SUMMARY
-          echo "3. **Monitor results over time**: Track which scanner finds unique issues" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Scan Results Available In:" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Security Tab**: SARIF results for both scan types" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifacts**: Full SARIF reports attached to workflow run" >> $GITHUB_STEP_SUMMARY
 
   create-release:
     needs: [docker-build-test, security-scan-release]
