@@ -86,7 +86,8 @@ jobs:
           
           # Analyze package types specifically for Python
           if [[ -f "sbom.spdx.json" ]]; then
-            echo "### 🐍 Python Dependencies (Top 15)" >> $GITHUB_STEP_SUMMARY
+            echo "### 🐍 Python Production Dependencies" >> $GITHUB_STEP_SUMMARY
+            echo "**Note**: Only production dependencies should be present (no pytest, pylint, etc.)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             jq -r '.packages[] | select(.name != null and (.name | test("python|py|flask|werkzeug|jinja|click"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -15 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
@@ -105,17 +106,22 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Check for uv specifically
-            UV_FOUND=$(jq -r '.packages[] | select(.name != null and (.name | test("uv"; "i"))) | .name' sbom.spdx.json | wc -l)
-            if [[ "$UV_FOUND" -gt 0 ]]; then
-              echo "✅ **uv package manager detected in SBOM**" >> $GITHUB_STEP_SUMMARY
+            # Check for development dependencies (should not be present in production image)
+            DEV_DEPS_FOUND=$(jq -r '.packages[] | select(.name != null and (.name | test("pytest|pylint|black|isort|mypy|bandit"; "i"))) | .name' sbom.spdx.json | wc -l)
+            if [[ "$DEV_DEPS_FOUND" -gt 0 ]]; then
+              echo "⚠️ **Development dependencies detected in production image!**" >> $GITHUB_STEP_SUMMARY
+              echo "Found development packages:" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              jq -r '.packages[] | select(.name != null and (.name | test("pytest|pylint|black|isort|mypy|bandit"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "**Action needed**: Check Dockerfile - use \`uv sync --no-dev\` for production builds" >> $GITHUB_STEP_SUMMARY
             else
-              echo "⚠️ **uv package manager not detected in SBOM** (expected limitation)" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **No development dependencies detected** - production image is clean" >> $GITHUB_STEP_SUMMARY
             fi
             
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 💡 SBOM Usage Tips" >> $GITHUB_STEP_SUMMARY
-            echo "- **Vulnerability Scanning**: \`grype sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Vulnerability Scanning**: \`trivy sbom sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
             echo "- **License Analysis**: \`scancode-toolkit sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
             echo "- **Supply Chain**: Use for SLSA compliance and audit requirements" >> $GITHUB_STEP_SUMMARY
             echo "- **Download**: Available as artifact and attached to this release" >> $GITHUB_STEP_SUMMARY
