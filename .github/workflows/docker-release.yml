@@ -95,33 +95,6 @@ jobs:
             jq -r '.packages[] | select(.name != null and (.name | test("lib|curl|apt|deb"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -10 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # License analysis
-            echo "### 📄 License Summary" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION") | .licenseConcluded' sbom.spdx.json | sort | uniq -c | sort -nr | head -10 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # Check for development dependencies (should not be present in production image)
-            DEV_DEPS_FOUND=$(jq -r '.packages[] | select(.name != null and (.name | test("pytest|pylint|black|isort|mypy|bandit"; "i"))) | .name' sbom.spdx.json | wc -l)
-            if [[ "$DEV_DEPS_FOUND" -gt 0 ]]; then
-              echo "⚠️ **Development dependencies detected in production image!**" >> $GITHUB_STEP_SUMMARY
-              echo "Found development packages:" >> $GITHUB_STEP_SUMMARY
-              echo '```' >> $GITHUB_STEP_SUMMARY
-              jq -r '.packages[] | select(.name != null and (.name | test("pytest|pylint|black|isort|mypy|bandit"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json >> $GITHUB_STEP_SUMMARY
-              echo '```' >> $GITHUB_STEP_SUMMARY
-              echo "**Action needed**: Check Dockerfile - use \`uv sync --no-dev\` for production builds" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "✅ **No development dependencies detected** - production image is clean" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 💡 SBOM Usage Tips" >> $GITHUB_STEP_SUMMARY
-            echo "- **Vulnerability Scanning**: \`trivy sbom sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **License Analysis**: \`scancode-toolkit sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Supply Chain**: Use for SLSA compliance and audit requirements" >> $GITHUB_STEP_SUMMARY
-            echo "- **Download**: Available as artifact and attached to this release" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload SBOM artifacts
@@ -240,12 +213,14 @@ jobs:
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ MIT License Compatibility Matrix" >> $GITHUB_STEP_SUMMARY
-          echo "- **✅ Fully Compatible**: Apache-2.0, BSD variants, ISC, CC0-1.0" >> $GITHUB_STEP_SUMMARY
-          echo "- **⚠️ Review Needed**: GPL variants (copyleft), CDDL, EPL, MPL" >> $GITHUB_STEP_SUMMARY  
-          echo "- **✅ System Libraries**: LicenseRef-* (typically Debian packages - distribution OK)" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 MIT License Compatibility Reference" >> $GITHUB_STEP_SUMMARY
+          echo "**Note**: This is a general reference - actual issues are reported above if found." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "💡 **MIT is very permissive** - you can usually include dependencies with any license in your binary distribution" >> $GITHUB_STEP_SUMMARY
+          echo "- **✅ Always Compatible**: Apache-2.0, BSD variants, ISC, CC0-1.0" >> $GITHUB_STEP_SUMMARY
+          echo "- **⚠️ Would Need Review**: GPL variants, LGPL, AGPL, CDDL, EPL, MPL" >> $GITHUB_STEP_SUMMARY  
+          echo "- **✅ System Libraries**: LicenseRef-* (Debian packages - safe for distribution)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **MIT allows almost everything** - you can include dependencies with any license in binary distributions" >> $GITHUB_STEP_SUMMARY
 
       - name: Security Scan Summary
         run: |
@@ -278,14 +253,6 @@ jobs:
           else
             echo "- ❌ No Trivy SBOM results available" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Analysis and Benefits
-          echo "### ✅ Why Trivy-Only Strategy" >> $GITHUB_STEP_SUMMARY
-          echo "- **Fewer False Positives**: Trivy filters out irrelevant old CVEs that Grype reports" >> $GITHUB_STEP_SUMMARY
-          echo "- **Better Accuracy**: Contextual analysis reduces noise from system packages" >> $GITHUB_STEP_SUMMARY
-          echo "- **Comprehensive Coverage**: Both image-level and SBOM-based scanning" >> $GITHUB_STEP_SUMMARY
-          echo "- **Active Maintenance**: CNCF project with regular updates" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "### 📊 Scan Results Available In:" >> $GITHUB_STEP_SUMMARY
