@@ -2,11 +2,6 @@ name: Python Code Quality (Reusable)
 
 on:
   workflow_call: {}
-  push:
-    branches:
-      - 'feature/**'
-  pull_request:
-    branches: [ main ]
 
 jobs:
   code-quality:
