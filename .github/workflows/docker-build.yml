@@ -75,9 +75,7 @@ jobs:
               feature:
                 regex: ^feature/(?<BranchName>.+)$
                 label: '{BranchName}'
-                increment: Patch
-                prevent-increment:
-                  of-merged-branch-version: false
+                increment: Inherit
                 track-merge-target: false
 
       - name: Execute GitVersion
@@ -94,7 +92,7 @@ jobs:
           echo "📊 GitVersion Results:"
           echo "  - SemVer: ${{ steps.gitversion.outputs.semVer }}"
           echo "  - MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
-          echo "  - Final version: ${{ steps.calculate-version.outputs.version }}"
+          echo "  - Final version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}"
 
   build-docker-image:
     needs: calculate-version
