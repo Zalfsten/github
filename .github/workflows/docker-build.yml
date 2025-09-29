@@ -67,7 +67,6 @@ jobs:
             mode: ContinuousDeployment
             tag-prefix: '${{ env.GITVERSION_TAG_PREFIX }}'
             semantic-version-format: Strict
-            continuous-delivery-fallback-tag: ci
             branches:
               main:
                 label: ''
