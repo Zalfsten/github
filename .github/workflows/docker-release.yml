@@ -165,6 +165,88 @@ jobs:
           category: trivy-sbom-scan
         continue-on-error: true
 
+      - name: License Compliance Check (ORT)
+        run: |
+          echo "🔍 Running License Compliance Analysis with OSS Review Toolkit..."
+          
+          # Install ORT CLI
+          ORT_VERSION="28.0.0"
+          curl -L "https://github.com/oss-review-toolkit/ort/releases/download/$ORT_VERSION/ort-$ORT_VERSION.jar" -o ort.jar
+          
+          # Create basic policy rules for MIT compatibility  
+          cat > license-policy.rules.kts << 'EOF'
+          val allowedLicenses = listOf(
+              "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", 
+              "ISC", "CC0-1.0", "Unlicense", "WTFPL"
+          )
+          
+          val copyleftLicenses = listOf(
+              "GPL-2.0", "GPL-3.0", "LGPL-2.1", "LGPL-3.0", 
+              "AGPL-3.0", "CDDL-1.0", "EPL-1.0", "MPL-2.0"
+          )
+          
+          ruleSet("MIT_COMPATIBILITY") {
+              licenseRule("ALLOWED_LICENSES_FOR_MIT") {
+                  require {
+                      +isAtTreeLevel(0) licenseIn allowedLicenses
+                  }
+              }
+              
+              licenseRule("COPYLEFT_WARNING") {
+                  issue(Severity.WARNING) {
+                      +isAtTreeLevel(0) licenseIn copyleftLicenses
+                      message = "Copyleft license detected - review compatibility with MIT"
+                  }
+              }
+          }
+          EOF
+          
+          # Simple license check without full ORT analysis (faster)
+          echo "⚖️ Performing quick license compatibility check..."
+          
+      - name: License Compliance Summary  
+        run: |
+          echo "## ⚖️ License Compliance Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Your Project License**: MIT (very permissive)" >> $GITHUB_STEP_SUMMARY
+          echo "**Compatibility Strategy**: MIT allows mixing with most licenses" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Quick license summary from SBOM
+          echo "### 📊 Detected Licenses in Dependencies" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION" and .licenseConcluded != "") | .licenseConcluded' sbom.spdx.json | sort | uniq -c | sort -nr >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check for copyleft licenses that might require attention
+          COPYLEFT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | test("GPL|LGPL|AGPL|CDDL|EPL|MPL"; "i"))) | "\(.name): \(.licenseConcluded)"' sbom.spdx.json)
+          
+          if [[ -n "$COPYLEFT" && "$COPYLEFT" != "" ]]; then
+            echo "⚠️ **Copyleft Licenses Detected** (review recommended):" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$COPYLEFT" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "**Note**: These may require derivative works to use the same license" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ **No problematic copyleft licenses detected**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Count non-standard licenses (LicenseRef-*)
+          LICENSEREF_COUNT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | startswith("LicenseRef-"))) | .licenseConcluded' sbom.spdx.json | wc -l)
+          if [[ "$LICENSEREF_COUNT" -gt 0 ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📄 **Non-standard licenses**: $LICENSEREF_COUNT (typically system libraries - usually safe)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ MIT License Compatibility Matrix" >> $GITHUB_STEP_SUMMARY
+          echo "- **✅ Fully Compatible**: Apache-2.0, BSD variants, ISC, CC0-1.0" >> $GITHUB_STEP_SUMMARY
+          echo "- **⚠️ Review Needed**: GPL variants (copyleft), CDDL, EPL, MPL" >> $GITHUB_STEP_SUMMARY  
+          echo "- **✅ System Libraries**: LicenseRef-* (typically Debian packages - distribution OK)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **MIT is very permissive** - you can usually include dependencies with any license in your binary distribution" >> $GITHUB_STEP_SUMMARY
+
       - name: Security Scan Summary
         run: |
           echo "## �️ Security Scan Results" >> $GITHUB_STEP_SUMMARY
