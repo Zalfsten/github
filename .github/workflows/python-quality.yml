@@ -1,6 +1,7 @@
-name: Python Code Quality
+name: Python Code Quality (Reusable)
 
 on:
+  workflow_call: {}
   push:
     branches:
       - 'feature/**'
