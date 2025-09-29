@@ -162,24 +162,158 @@ jobs:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           output-file: sbom.spdx.json
           format: spdx-json
+          
+      - name: Generate CycloneDX SBOM (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
+          output-file: sbom.cyclonedx.json
+          format: cyclonedx-json
+          
+      - name: Analyze SBOM completeness (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        run: |
+          echo "## 📋 SBOM Analysis for Python/uv Application" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Count different package types
+          SPDX_PACKAGES=$(jq '.packages | length' sbom.spdx.json 2>/dev/null || echo "0")
+          CYCLONE_COMPONENTS=$(jq '.components | length' sbom.cyclonedx.json 2>/dev/null || echo "0")
+          
+          echo "### 📊 Package Counts" >> $GITHUB_STEP_SUMMARY
+          echo "- **SPDX Format**: $SPDX_PACKAGES packages" >> $GITHUB_STEP_SUMMARY
+          echo "- **CycloneDX Format**: $CYCLONE_COMPONENTS components" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Analyze package types specifically for Python
+          if [[ -f "sbom.spdx.json" ]]; then
+            echo "### 🐍 Python Dependencies (Top 15)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("python|py|flask|werkzeug|jinja|click"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -15 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            echo "### 📦 System Packages (Debian/APT)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("lib|curl|apt|deb"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -10 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # License analysis
+            echo "### 📄 License Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION") | .licenseConcluded' sbom.spdx.json | sort | uniq -c | sort -nr | head -10 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Check for uv specifically
+            UV_FOUND=$(jq -r '.packages[] | select(.name != null and (.name | test("uv"; "i"))) | .name' sbom.spdx.json | wc -l)
+            if [[ "$UV_FOUND" -gt 0 ]]; then
+              echo "✅ **uv package manager detected in SBOM**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ **uv package manager not detected in SBOM** (expected limitation)" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💡 SBOM Usage Tips" >> $GITHUB_STEP_SUMMARY
+            echo "- **Vulnerability Scanning**: \`grype sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **License Analysis**: \`scancode-toolkit sbom.spdx.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Supply Chain**: Use for SLSA compliance and audit requirements" >> $GITHUB_STEP_SUMMARY
+            echo "- **Download**: Available as artifact and attached to this release" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Vulnerability scan with Grype (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        run: |
+          # Install Grype for SBOM vulnerability scanning
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          
+          # Scan SBOM for vulnerabilities
+          echo "## 🛡️ SBOM Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Generate both table output for summary and SARIF for GitHub Security
+          if grype sbom.spdx.json -o table > grype-results.txt 2>&1; then
+            # Generate SARIF output for GitHub Security tab
+            grype sbom.spdx.json -o sarif > grype-results.sarif 2>/dev/null || echo "SARIF generation failed"
+            
+            echo "### 📊 Vulnerability Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -20 grype-results.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Count vulnerabilities by severity
+            CRITICAL=$(grep -c "Critical" grype-results.txt || echo "0")
+            HIGH=$(grep -c "High" grype-results.txt || echo "0") 
+            MEDIUM=$(grep -c "Medium" grype-results.txt || echo "0")
+            LOW=$(grep -c "Low" grype-results.txt || echo "0")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Severity Breakdown" >> $GITHUB_STEP_SUMMARY
+            echo "- 🔴 **Critical**: $CRITICAL" >> $GITHUB_STEP_SUMMARY
+            echo "- 🟠 **High**: $HIGH" >> $GITHUB_STEP_SUMMARY  
+            echo "- 🟡 **Medium**: $MEDIUM" >> $GITHUB_STEP_SUMMARY
+            echo "- 🟢 **Low**: $LOW" >> $GITHUB_STEP_SUMMARY
+            
+            # Check if SARIF file was created
+            if [[ -f "grype-results.sarif" ]]; then
+              echo "- 📊 **SARIF Report**: Generated for GitHub Security tab" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Grype scan failed or no vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+          fi
 
-      - name: Upload SBOM artifact (final releases only)
+      - name: Upload Grype SARIF results (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype-results.sarif
+          category: grype-sbom-scan
+        continue-on-error: true
+
+      - name: Upload SBOM artifacts (final releases only)
         if: needs.calculate-version.outputs.release-type == 'final'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-v${{ needs.calculate-version.outputs.version }}
-          path: sbom.spdx.json
+          path: |
+            sbom.spdx.json
+            sbom.cyclonedx.json
+            grype-results.txt
+            grype-results.sarif
+            trivy-sbom-results.sarif
 
-      - uses: aquasecurity/trivy-action@master
+      - name: Security scan with Trivy (Image)
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
           format: sarif
-          output: trivy-results.sarif
+          output: trivy-image-results.sarif
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Security scan with Trivy (SBOM) - final releases only
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: sbom
+          input: sbom.spdx.json
+          format: sarif
+          output: trivy-sbom-results.sarif
+
+      - name: Upload Trivy Image SARIF results
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: trivy-results.sarif
+          sarif_file: trivy-image-results.sarif
+          category: trivy-image-scan
+
+      - name: Upload Trivy SBOM SARIF results (final releases only)
+        if: needs.calculate-version.outputs.release-type == 'final'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-sbom-results.sarif
+          category: trivy-sbom-scan
+        continue-on-error: true
 
   container-structure-test:
     needs: [calculate-version, build-docker-image]
@@ -304,6 +438,7 @@ jobs:
             ```
           files: |
             sbom.spdx.json
+            sbom.cyclonedx.json
           draft: true
           make_latest: true
           generate_release_notes: true
