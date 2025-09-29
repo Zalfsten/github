@@ -78,8 +78,3 @@ git push origin feature/neue-api
 # PR erstellen und Label "minor version" hinzufügen
 # Nach dem Merge wird automatisch von 1.0.0 auf 1.1.0 erhöht
 ```
-
-## CODEOWNERS
-
-- **File:** `CODEOWNERS`
-- **Purpose:** Spezifiziert Benutzer oder Teams, die für Code im Repository verantwortlich sind und Changes reviewen müssen.

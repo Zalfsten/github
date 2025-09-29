@@ -29,8 +29,8 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --extra test
-        uv add --dev pylint black isort mypy bandit
+        # Install all dependencies including dev and test dependencies
+        uv sync --dev --extra test
 
     - name: Code formatting check with Black
       run: |
