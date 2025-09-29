@@ -70,13 +70,6 @@ jobs:
           output-file: sbom.spdx.json
           format: spdx-json
           
-      - name: Generate CycloneDX SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
-          output-file: sbom.cyclonedx.json
-          format: cyclonedx-json
-          
       - name: Analyze SBOM completeness
         run: |
           echo "## 📋 SBOM Analysis for Python/uv Application" >> $GITHUB_STEP_SUMMARY
@@ -216,6 +209,81 @@ jobs:
           category: trivy-sbom-scan
         continue-on-error: true
 
+      - name: Compare Security Scan Results
+        run: |
+          echo "## 🔍 Security Scan Comparison Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Purpose**: Compare results from 3 security tools to identify potential redundancy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Parse Grype results (SBOM-based)
+          echo "### 📊 Grype SBOM Scan Results" >> $GITHUB_STEP_SUMMARY
+          if [[ -f "grype-results.txt" ]]; then
+            GRYPE_TOTAL=$(grep -c "^" grype-results.txt || echo "0")
+            GRYPE_CRITICAL=$(grep -c "Critical" grype-results.txt || echo "0")
+            GRYPE_HIGH=$(grep -c "High" grype-results.txt || echo "0")
+            echo "- **Total findings**: $GRYPE_TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Critical**: $GRYPE_CRITICAL, **High**: $GRYPE_HIGH" >> $GITHUB_STEP_SUMMARY
+            echo "- **Scan type**: SBOM-based vulnerability detection" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ No Grype results available" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Parse Trivy Image results (Image-based)  
+          echo "### 🐳 Trivy Image Scan Results" >> $GITHUB_STEP_SUMMARY
+          if [[ -f "trivy-image-results.sarif" ]]; then
+            TRIVY_IMAGE_RESULTS=$(jq '.runs[0].results | length' trivy-image-results.sarif 2>/dev/null || echo "0")
+            TRIVY_IMAGE_CRITICAL=$(jq '.runs[0].results[] | select(.level == "error") | length' trivy-image-results.sarif 2>/dev/null || echo "0")
+            echo "- **Total findings**: $TRIVY_IMAGE_RESULTS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Critical/High**: $TRIVY_IMAGE_CRITICAL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Scan type**: Direct image layer analysis" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ No Trivy Image results available" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Parse Trivy SBOM results (SBOM-based)
+          echo "### 📋 Trivy SBOM Scan Results" >> $GITHUB_STEP_SUMMARY
+          if [[ -f "trivy-sbom-results.sarif" ]]; then
+            TRIVY_SBOM_RESULTS=$(jq '.runs[0].results | length' trivy-sbom-results.sarif 2>/dev/null || echo "0")
+            TRIVY_SBOM_CRITICAL=$(jq '.runs[0].results[] | select(.level == "error") | length' trivy-sbom-results.sarif 2>/dev/null || echo "0")
+            echo "- **Total findings**: $TRIVY_SBOM_RESULTS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Critical/High**: $TRIVY_SBOM_CRITICAL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Scan type**: SBOM-based vulnerability detection" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ No Trivy SBOM results available" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Analysis and Recommendations
+          echo "### 💡 Analysis & Recommendations" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Coverage Comparison**:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Grype (SBOM)**: Focuses on known vulnerabilities in catalogued packages" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trivy Image**: Direct filesystem scan, finds OS packages, secrets, misconfigurations" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trivy SBOM**: Same engine as Grype but using Trivy's vulnerability DB" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Redundancy detection
+          if [[ "$GRYPE_TOTAL" -gt 0 && "$TRIVY_SBOM_RESULTS" -gt 0 ]]; then
+            DIFF=$(echo "$(($GRYPE_TOTAL - $TRIVY_SBOM_RESULTS))" | sed 's/-//')
+            if [[ "$DIFF" -lt 5 ]]; then
+              echo "⚠️ **Potential Redundancy**: Grype and Trivy SBOM show similar results ($GRYPE_TOTAL vs $TRIVY_SBOM_RESULTS)" >> $GITHUB_STEP_SUMMARY
+              echo "**Recommendation**: Consider keeping only Trivy Image + one SBOM scanner" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Different Coverage**: Scans complement each other well" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "ℹ️ **Analysis**: Need more data points to determine redundancy" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🎯 Optimization Suggestions" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Keep Trivy Image**: Unique filesystem-level scanning" >> $GITHUB_STEP_SUMMARY
+          echo "2. **SBOM Scanner**: Choose Grype OR Trivy SBOM (not both)" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Monitor results over time**: Track which scanner finds unique issues" >> $GITHUB_STEP_SUMMARY
+
   create-release:
     needs: [docker-build-test, security-scan-release]
     runs-on: ubuntu-latest
@@ -234,10 +302,26 @@ jobs:
           fetch-depth: 0
 
       - name: Download SBOM artifact (final releases only)
-        if: env.RELEASE_TYPE == 'final'
         uses: actions/download-artifact@v4
         with:
           name: sbom-v${{ needs.docker-build-test.outputs.version }}
+
+      - name: Download Docker image artifact (for CycloneDX SBOM generation)
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-${{ needs.docker-build-test.outputs.version }}
+
+      - name: Load Docker image (for CycloneDX SBOM generation)
+        run: |
+          docker load < docker-image.tar.gz
+          echo "✅ Docker image loaded for CycloneDX SBOM generation"
+
+      - name: Generate CycloneDX SBOM (final releases only)
+        uses: anchore/sbom-action@v0
+        with:
+          image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
+          output-file: sbom.cyclonedx.json
+          format: cyclonedx-json
 
       - name: Create timestamp tag
         id: create_tag
