@@ -289,7 +289,7 @@ jobs:
   create-release:
     needs: [docker-build-test, security-scan-release]
     runs-on: ubuntu-latest
-    if: needs.docker-build-test.result == 'success' && needs.security-scan-release.result == 'success' && !startsWith(github.ref_name, 'feature/')
+    if: needs.docker-build-test.result == 'success' && needs.security-scan-release.result == 'success'
 
     permissions:
       contents: write
@@ -311,7 +311,7 @@ jobs:
       # Note: SPDX SBOM is generated in security-scan-release job
       # and downloaded as part of the SBOM artifact above
 
-      - name: Create timestamp tag
+      - name: Create version tag
         id: create_tag
         uses: mathieudutour/github-tag-action@v6.2
         with:
@@ -321,11 +321,15 @@ jobs:
 
       - name: Log release info
         run: |
-          # Only create GitHub release for final releases (main branch)
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            echo "Creating GitHub release for final release"
+          if [[ "${{ env.RELEASE_TYPE }}" == "final" ]]; then
+            echo "Creating GitHub release for final release (main branch)"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }}"
+            echo "✅ GitHub release: Will be created"
           else
-            echo "Feature release - Git tag created but no GitHub release"
+            echo "Feature branch release - tracking version progression"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }} (for GitVersion tracking)"
+            echo "⏭️ GitHub release: Skipped (feature branch)"
+            echo "💡 This tag helps GitVersion increment properly on subsequent builds"
           fi
 
       - name: Create GitHub Release (Draft)
