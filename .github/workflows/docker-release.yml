@@ -23,7 +23,6 @@ env:
   # Derived static variables
   GITVERSION_TAG_PREFIX: '.*-docker-v'
   DOCKER_PLATFORMS: linux/amd64
-  SBOM_FORMAT: spdx-json
   # Conditional variables using expressions - SINGLE SOURCE OF TRUTH
   IS_FEATURE_BRANCH: ${{ startsWith(github.ref_name, 'feature/') }}
   IS_MAIN_BRANCH: ${{ github.ref_name == 'main' }}
@@ -75,13 +74,11 @@ jobs:
           echo "## 📋 SBOM Analysis for Python/uv Application" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Count different package types
+          # Count packages in SBOM
           SPDX_PACKAGES=$(jq '.packages | length' sbom.spdx.json 2>/dev/null || echo "0")
-          CYCLONE_COMPONENTS=$(jq '.components | length' sbom.cyclonedx.json 2>/dev/null || echo "0")
           
-          echo "### 📊 Package Counts" >> $GITHUB_STEP_SUMMARY
-          echo "- **SPDX Format**: $SPDX_PACKAGES packages" >> $GITHUB_STEP_SUMMARY
-          echo "- **CycloneDX Format**: $CYCLONE_COMPONENTS components" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Package Count" >> $GITHUB_STEP_SUMMARY
+          echo "- **SPDX SBOM**: $SPDX_PACKAGES packages detected" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Analyze package types specifically for Python
@@ -133,8 +130,6 @@ jobs:
           name: sbom-v${{ needs.docker-build-test.outputs.version }}
           path: |
             sbom.spdx.json
-            trivy-image-results.sarif
-            trivy-sbom-results.sarif
 
       - name: Security scan with Trivy (Image)
         uses: aquasecurity/trivy-action@master
@@ -237,22 +232,8 @@ jobs:
         with:
           name: sbom-v${{ needs.docker-build-test.outputs.version }}
 
-      - name: Download Docker image artifact (for CycloneDX SBOM generation)
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image-${{ needs.docker-build-test.outputs.version }}
-
-      - name: Load Docker image (for CycloneDX SBOM generation)
-        run: |
-          docker load < docker-image.tar.gz
-          echo "✅ Docker image loaded for CycloneDX SBOM generation"
-
-      - name: Generate CycloneDX SBOM (final releases only)
-        uses: anchore/sbom-action@v0
-        with:
-          image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
-          output-file: sbom.cyclonedx.json
-          format: cyclonedx-json
+      # Note: SPDX SBOM is generated in security-scan-release job
+      # and downloaded as part of the SBOM artifact above
 
       - name: Create timestamp tag
         id: create_tag
@@ -305,7 +286,6 @@ jobs:
             ```
           files: |
             sbom.spdx.json
-            sbom.cyclonedx.json
           draft: true
           make_latest: true
           generate_release_notes: true
