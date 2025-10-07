@@ -14,10 +14,10 @@ on:
         - patch
 
 env:
-  GIT_USER_NAME: GitHub Pipeline
-  GIT_USER_EMAIL: github_pipeline@fairagro.net
-  DOCKERHUB_NAMESPACE: zalf
-  IMAGE_NAME: fairagro_advanced_middleware_api
+  GIT_USER_NAME: ${{ vars.GIT_USER_NAME || 'GitHub Pipeline' }}
+  GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL || 'github_pipeline@fairagro.net' }}
+  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'zalf' }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'fairagro_advanced_middleware_api' }}
 
 jobs:
   helm-release:
