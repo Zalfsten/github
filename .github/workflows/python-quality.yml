@@ -2,6 +2,14 @@ name: Python Code Quality (Reusable)
 
 on:
   workflow_call: {}
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/python-quality.yml'
+      - '.python-version'
 
 jobs:
   code-quality:
