@@ -100,7 +100,7 @@ jobs:
       contents: read
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
-      dockerhub-pushed: ${{ steps.push.outputs.pushed }}
+      dockerhub-pushed: ${{ env.DOCKERHUB_AVAILABLE == 'true' && inputs.push_to_registry }}
 
     env:
       DOCKERHUB_AVAILABLE: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_TOKEN != '' }}
@@ -162,14 +162,11 @@ jobs:
           artifact_name: docker-image-${{ needs.calculate-version.outputs.version }}
           retention_days: 1
 
-      - name: Set push status
-        id: push
+      - name: Log push status
         run: |
           if [[ "${{ env.DOCKERHUB_AVAILABLE }}" == "true" && "${{ inputs.push_to_registry }}" == "true" ]]; then
-            echo "pushed=true" >> $GITHUB_OUTPUT
             echo "✅ Image pushed to DockerHub"
           else
-            echo "pushed=false" >> $GITHUB_OUTPUT
             echo "⏭️ DockerHub push skipped"
           fi
 
