@@ -53,15 +53,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+      - name: Download and load Docker image
+        uses: ishworkh/docker-image-artifact-download@v1
         with:
-          name: docker-image-${{ needs.docker-build-test.outputs.version }}
+          artifact_name: docker-image-${{ needs.docker-build-test.outputs.version }}
 
-      - name: Load Docker image
-        run: |
-          docker load < docker-image.tar.gz
-          echo "✅ Docker image loaded: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}"
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
