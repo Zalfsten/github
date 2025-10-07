@@ -66,7 +66,7 @@ jobs:
         uses: anchore/sbom-action@v0
         with:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
-          output-file: sbom.spdx.json
+          output-file: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           format: spdx-json
           artifact-name: sbom-v${{ needs.docker-build-test.outputs.version }}
           
@@ -76,24 +76,25 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Count packages in SBOM
-          SPDX_PACKAGES=$(jq '.packages | length' sbom.spdx.json 2>/dev/null || echo "0")
+          SBOM_FILE="sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json"
+          SPDX_PACKAGES=$(jq '.packages | length' "$SBOM_FILE" 2>/dev/null || echo "0")
           
           echo "### 📊 Package Count" >> $GITHUB_STEP_SUMMARY
           echo "- **SPDX SBOM**: $SPDX_PACKAGES packages detected" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Analyze package types specifically for Python
-          if [[ -f "sbom.spdx.json" ]]; then
+          if [[ -f "$SBOM_FILE" ]]; then
             echo "### 🐍 Python Production Dependencies" >> $GITHUB_STEP_SUMMARY
             echo "**Note**: Only production dependencies should be present (no pytest, pylint, etc.)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            jq -r '.packages[] | select(.name != null and (.name | test("python|py|flask|werkzeug|jinja|click"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -15 >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("python|py|flask|werkzeug|jinja|click"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' "$SBOM_FILE" | head -15 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
             echo "### 📦 System Packages (Debian/APT)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            jq -r '.packages[] | select(.name != null and (.name | test("lib|curl|apt|deb"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' sbom.spdx.json | head -10 >> $GITHUB_STEP_SUMMARY
+            jq -r '.packages[] | select(.name != null and (.name | test("lib|curl|apt|deb"; "i"))) | "\(.name) (\(.versionInfo // "unknown"))"' "$SBOM_FILE" | head -10 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
@@ -111,10 +112,10 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: sbom
-          input: sbom.spdx.json
+          input: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           format: sarif
           output: trivy-sbom-results.sarif
-          scan-ref: sbom.spdx.json
+          scan-ref: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           severity: 'CRITICAL,HIGH,MEDIUM'  # Skip LOW severity to reduce noise
           ignore-unfixed: true  # Focus on fixable vulnerabilities
 
@@ -182,12 +183,12 @@ jobs:
           # Quick license summary from SBOM
           echo "### 📊 Detected Licenses in Dependencies" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION" and .licenseConcluded != "") | .licenseConcluded' sbom.spdx.json | sort | uniq -c | sort -nr >> $GITHUB_STEP_SUMMARY
+          jq -r '.packages[] | select(.licenseConcluded != null and .licenseConcluded != "NOASSERTION" and .licenseConcluded != "") | .licenseConcluded' "sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json" | sort | uniq -c | sort -nr >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Check for copyleft licenses that might require attention
-          COPYLEFT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | test("GPL|LGPL|AGPL|CDDL|EPL|MPL"; "i"))) | "\(.name): \(.licenseConcluded)"' sbom.spdx.json)
+          COPYLEFT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | test("GPL|LGPL|AGPL|CDDL|EPL|MPL"; "i"))) | "\(.name): \(.licenseConcluded)"' "sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json")
           
           if [[ -n "$COPYLEFT" && "$COPYLEFT" != "" ]]; then
             echo "⚠️ **Copyleft Licenses Detected** (review recommended):" >> $GITHUB_STEP_SUMMARY
@@ -200,7 +201,7 @@ jobs:
           fi
           
           # Count non-standard licenses (LicenseRef-*)
-          LICENSEREF_COUNT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | startswith("LicenseRef-"))) | .licenseConcluded' sbom.spdx.json | wc -l)
+          LICENSEREF_COUNT=$(jq -r '.packages[] | select(.licenseConcluded != null and (.licenseConcluded | startswith("LicenseRef-"))) | .licenseConcluded' "sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json" | wc -l)
           if [[ "$LICENSEREF_COUNT" -gt 0 ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "📄 **Non-standard licenses**: $LICENSEREF_COUNT (typically system libraries - usually safe)" >> $GITHUB_STEP_SUMMARY
@@ -340,7 +341,7 @@ jobs:
             **Image Digest**: `${{ needs.docker-build-test.outputs.image-digest }}`
 
             - ✅ Security scan completed (see Security tab)
-            - ✅ SBOM attached (sbom.spdx.json)
+            - ✅ SBOM attached (sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json)
             - 🐳 Platform: linux/amd64
 
             ### Installation
@@ -359,7 +360,7 @@ jobs:
             docker build -t local/{3}:{4} .', github.repository, github.repository, github.sha, env.IMAGE_NAME, needs.docker-build-test.outputs.version) }}
             ```
           files: |
-            sbom.spdx.json
+            sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           draft: true
           make_latest: true
           generate_release_notes: true
