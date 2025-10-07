@@ -68,7 +68,7 @@ jobs:
           image: local/${{ env.IMAGE_NAME }}:${{ needs.docker-build-test.outputs.version }}
           output-file: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           format: spdx-json
-          artifact-name: sbom-v${{ needs.docker-build-test.outputs.version }}
+          artifact-name: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
           
       - name: Analyze SBOM completeness
         run: |
@@ -301,7 +301,7 @@ jobs:
       - name: Download SBOM artifact (final releases only)
         uses: actions/download-artifact@v4
         with:
-          name: sbom-v${{ needs.docker-build-test.outputs.version }}
+          name: sbom-v${{ needs.docker-build-test.outputs.version }}.spdx.json
 
       # Note: SPDX SBOM is generated in security-scan-release job
       # and downloaded as part of the SBOM artifact above
