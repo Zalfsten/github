@@ -18,9 +18,63 @@ env:
   GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL || 'github_pipeline@fairagro.net' }}
   DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'zalf' }}
   IMAGE_NAME: ${{ vars.IMAGE_NAME || 'fairagro_advanced_middleware_api' }}
+  GITVERSION_TAG_PREFIX: ${{ vars.GITVERSION_TAG_PREFIX || '.*-helm-v' }}
 
 jobs:
+  calculate-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}
+    env:
+      IS_FEATURE_BRANCH: ${{ startsWith(github.ref_name, 'feature/') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: '6.4.x'
+
+      - name: Create GitVersion config
+        uses: DamianReeves/write-file-action@master
+        with:
+          path: GitVersion.yml
+          write-mode: overwrite
+          contents: |
+            mode: ContinuousDeployment
+            tag-prefix: '${{ env.GITVERSION_TAG_PREFIX }}'
+            semantic-version-format: Strict
+            branches:
+              main:
+                label: ''
+                increment: patch
+              feature:
+                regex: ^feature/(?<BranchName>.+)$
+                label: '{BranchName}'
+                increment: Inherit
+                track-merge-target: false
+
+      - name: Execute GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4
+
+      - name: Debug version info
+        run: |
+          echo "🔧 Helm Version Configuration:"
+          echo "  - Branch: ${{ github.ref_name }}"
+          echo "  - Is feature branch: ${{ env.IS_FEATURE_BRANCH }}"
+          echo ""
+          echo "📊 GitVersion Results:"
+          echo "  - SemVer: ${{ steps.gitversion.outputs.semVer }}"
+          echo "  - MajorMinorPatch: ${{ steps.gitversion.outputs.majorMinorPatch }}"
+          echo "  - Final version: ${{ env.IS_FEATURE_BRANCH == 'true' && steps.gitversion.outputs.semVer || steps.gitversion.outputs.majorMinorPatch }}"
+
   helm-release:
+    needs: calculate-version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,45 +84,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gittools/actions/gitversion/setup@v4
-        with:
-          versionSpec: '6.x'
-
-      - name: Configure GitVersion and calculate version
-        id: configure
-        run: |
-          # Determine increment and release type
-          if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            INCREMENT="patch"
-            RELEASE_TYPE="feature"
-            echo "🌿 Helm feature release"
-          else
-            INCREMENT="${{ github.event.inputs.version_bump }}"
-            RELEASE_TYPE="final"
-            echo "🚀 Helm final release - $INCREMENT increment"
-          fi
-
-          # Create GitVersion config
-          cat > GitVersion.yml << EOF
-          mode: ContinuousDeployment
-          tag-prefix: '.*-chart-v'
-          semantic-version-format: Strict
-          branches:
-            main:
-              label: ''
-              increment: $INCREMENT
-            feature:
-              regex: ^feature/(?<BranchName>.+)$
-              label: '{BranchName}'
-              increment: Inherit
-          EOF
-
-          echo "RELEASE_TYPE=$RELEASE_TYPE" >> $GITHUB_ENV
-          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
-
-      - uses: gittools/actions/gitversion/execute@v4
-        id: gitversion
-
       - uses: azure/setup-helm@v4
         with:
           version: '3.14.0'
@@ -76,12 +91,8 @@ jobs:
       - name: Create Helm release
         id: create_tag
         run: |
-          # Determine version
-          if [[ "${{ github.ref_name }}" == feature/* ]]; then
-            VERSION="${{ steps.gitversion.outputs.SemVer }}"
-          else
-            VERSION="${{ steps.gitversion.outputs.MajorMinorPatch }}"
-          fi
+          # Use calculated version from previous job
+          VERSION="${{ needs.calculate-version.outputs.version }}"
 
           # Extract appVersion
           APP_VERSION=$(grep '^appVersion:' helm/Chart.yaml | sed 's/appVersion: *"*\([^"]*\)"*/\1/')
@@ -112,7 +123,7 @@ jobs:
           fi
 
       - name: Create GitHub Release (Draft)
-        if: steps.configure.outputs.release-type == 'final'
+        if: github.ref_name == 'main'
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
@@ -136,7 +147,7 @@ jobs:
           append_body: true
 
       - name: Finalize Release
-        if: steps.configure.outputs.release-type == 'final'
+        if: github.ref_name == 'main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -177,8 +188,7 @@ jobs:
             exit 0
           fi
           if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            VERSION="${{ steps.gitversion.outputs.semVer }}"
-            [[ "${{ github.ref_name }}" != feature/* ]] && VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+            VERSION="${{ needs.calculate-version.outputs.version }}"
 
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
             helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
