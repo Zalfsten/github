@@ -154,13 +154,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Save and upload Docker image as artifact
+      - name: Save Docker image as artifact
         if: inputs.save_image
-        uses: ishworkh/docker-image-artifact-upload@v1
+        run: |
+          docker save local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }} | gzip > docker-image.tar.gz
+
+      - name: Upload Docker image artifact
+        if: inputs.save_image
+        uses: actions/upload-artifact@v4
         with:
-          image: local/${{ env.IMAGE_NAME }}:${{ needs.calculate-version.outputs.version }}
-          artifact_name: docker-image-${{ needs.calculate-version.outputs.version }}
-          retention_days: 1
+          name: docker-image-${{ needs.calculate-version.outputs.version }}
+          path: docker-image.tar.gz
+          retention-days: 1
 
       - name: Log push status
         run: |
