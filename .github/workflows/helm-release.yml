@@ -188,20 +188,16 @@ jobs:
             --field draft=false
           echo "🎉 Release finalized successfully"
 
-      - name: Push to DockerHub
-        if: always()
-        run: |
-          # Check if we should push based on release type
-          if [[ "$RELEASE_TYPE" != "final" && "$RELEASE_TYPE" != "feature" ]]; then
-            echo "⏭️ Skipping DockerHub push - not a final or feature release"
-            exit 0
-          fi
-          if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            VERSION="${{ needs.calculate-version.outputs.version }}"
+      - name: Login to Docker Hub
+        if: github.ref_name == 'main'
+        uses: docker/login-action@v3
+        with:
+          registry: registry-1.docker.io
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
-            helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
-            echo "✅ Pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:$VERSION"
-          else
-            echo "⚠️ Skipping DockerHub push - missing secrets"
-          fi
+      - name: Push Helm chart to DockerHub
+        if: github.ref_name == 'main'
+        run: |
+          helm push ${{ steps.package_chart.outputs.chart-package }} oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
+          echo "✅ Pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.package_chart.outputs.chart-package }}"
