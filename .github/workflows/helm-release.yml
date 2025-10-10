@@ -51,7 +51,7 @@ jobs:
             branches:
               main:
                 label: ''
-                increment: patch
+                increment: ${{ inputs.version_bump }}
               feature:
                 regex: ^feature/(?<BranchName>.+)$
                 label: '{BranchName}'
@@ -67,6 +67,7 @@ jobs:
           echo "🔧 Helm Version Configuration:"
           echo "  - Branch: ${{ github.ref_name }}"
           echo "  - Is feature branch: ${{ env.IS_FEATURE_BRANCH }}"
+          echo "  - Version bump input: ${{ github.event.inputs.version_bump || 'patch (default)' }}"
           echo ""
           echo "📊 GitVersion Results:"
           echo "  - SemVer: ${{ steps.gitversion.outputs.semVer }}"
