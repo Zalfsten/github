@@ -79,6 +79,10 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
+      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-helm-v${{ needs.calculate-version.outputs.version }}
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,25 +92,38 @@ jobs:
         with:
           version: '3.14.0'
 
-      - name: Create Helm release
-        id: create_tag
+      - name: Extract app version
+        id: prepare_release
+        env:
+          CHART_VERSION: ${{ needs.calculate-version.outputs.version }}
         run: |
-          # Use calculated version from previous job
-          VERSION="${{ needs.calculate-version.outputs.version }}"
-
-          # Extract appVersion
+          # Extract appVersion from Chart.yaml
           APP_VERSION=$(grep '^appVersion:' helm/Chart.yaml | sed 's/appVersion: *"*\([^"]*\)"*/\1/')
-
-          # Create timestamp tag (always for all releases)
-          RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
-          echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-          echo "chart-version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Set outputs for later steps
+          echo "release-tag=${{ env.RELEASE_TAG }}" >> $GITHUB_OUTPUT
+          echo "chart-version=$CHART_VERSION" >> $GITHUB_OUTPUT
           echo "app-version=$APP_VERSION" >> $GITHUB_OUTPUT
+          
+          echo "📋 Release prepared:"
+          echo "  - Release tag: ${{ env.RELEASE_TAG }}"
+          echo "  - Chart version: $CHART_VERSION"
+          echo "  - App version: $APP_VERSION"
 
-          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
-          git config --local user.name "${{ env.GIT_USER_NAME }}"
-          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Release tag exists"
+      - name: Create version tag
+        id: create_tag
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ env.RELEASE_TAG }}
+          tag_prefix: ""
 
+      - name: Package Helm chart
+        id: package_chart
+        run: |
+          VERSION="${{ steps.prepare_release.outputs.chart-version }}"
+          APP_VERSION="${{ steps.prepare_release.outputs.app-version }}"
+          
           # Package Helm chart
           helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"
 
@@ -115,11 +132,16 @@ jobs:
           echo "chart-package=$CHART_PACKAGE" >> $GITHUB_OUTPUT
           echo "📦 Created Helm chart package: $CHART_PACKAGE"
 
-          # Only create GitHub release for final releases (main branch)
-          if [[ "$RELEASE_TYPE" == "final" ]]; then
+      - name: Log release info
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "Creating GitHub release for final Helm release"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }}"
+            echo "✅ GitHub release: Will be created"
           else
-            echo "Feature release - Git tag created but no GitHub release"
+            echo "Feature branch release - tracking version progression"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }} (for GitVersion tracking)"
+            echo "⏭️ GitHub release: Skipped (feature branch)"
           fi
 
       - name: Create GitHub Release (Draft)
@@ -127,20 +149,20 @@ jobs:
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.create_tag.outputs.release-tag }}
-          name: "chart-v${{ steps.create_tag.outputs.chart-version }}"
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "chart-v${{ steps.prepare_release.outputs.chart-version }}"
           body: |
-            ## Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}
+            ## Helm Chart Release v${{ steps.prepare_release.outputs.chart-version }}
 
-            **Chart Version**: ${{ steps.create_tag.outputs.chart-version }}
-            **App Version**: ${{ steps.create_tag.outputs.app-version }}
+            **Chart Version**: ${{ steps.prepare_release.outputs.chart-version }}
+            **App Version**: ${{ steps.prepare_release.outputs.app-version }}
 
             ```bash
             helm upgrade --install fairagro-middleware ./helm \
-              --set image.tag=${{ steps.create_tag.outputs.app-version }} \
+              --set image.tag=${{ steps.prepare_release.outputs.app-version }} \
               --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
             ```
-          files: ${{ steps.create_tag.outputs.chart-package }}
+          files: ${{ steps.package_chart.outputs.chart-package }}
           draft: true
           make_latest: true
           generate_release_notes: true
@@ -151,19 +173,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Looking for draft release with tag: ${{ steps.create_tag.outputs.release-tag }}"
+          echo "🔍 Looking for draft release with tag: ${{ env.RELEASE_TAG }}"
 
           # Give GitHub API a moment to index the new release
           sleep 5
 
           # Try to get the release ID from the draft release we just created
-          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id' 2>/dev/null); then
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
 
             # Search for the release by version in all releases
-            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.create_tag.outputs.release-tag }}") | .id')
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ env.RELEASE_TAG }}") | .id')
 
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
