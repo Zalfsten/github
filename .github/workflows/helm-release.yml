@@ -18,7 +18,7 @@ env:
   GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL || 'github_pipeline@fairagro.net' }}
   DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'zalf' }}
   IMAGE_NAME: ${{ vars.IMAGE_NAME || 'fairagro_advanced_middleware_api' }}
-  GITVERSION_TAG_PREFIX: ${{ vars.GITVERSION_TAG_PREFIX || '.*-helm-v' }}
+  GITVERSION_TAG_PREFIX: ${{ vars.GITVERSION_TAG_PREFIX || '.*-chart-v' }}  # Support both old and new tag patterns
 
 jobs:
   calculate-version:
@@ -79,6 +79,11 @@ jobs:
     permissions:
       contents: write
 
+    env:
+      TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
+      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-helm-v${{ needs.calculate-version.outputs.version }}
+      CHART_VERSION: ${{ needs.calculate-version.outputs.version }}
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,38 +93,42 @@ jobs:
         with:
           version: '3.14.0'
 
-      - name: Create Helm release
-        id: create_tag
+      - name: Log release info
         run: |
-          # Use calculated version from previous job
-          VERSION="${{ needs.calculate-version.outputs.version }}"
+          echo "📋 Release prepared (all variables defined in YAML):"
+          echo "  - Release tag: ${{ env.RELEASE_TAG }}"
+          echo "  - Chart version: ${{ env.CHART_VERSION }}"
+          echo "  - App version: (read from Chart.yaml by Helm)"
 
-          # Extract appVersion
-          APP_VERSION=$(grep '^appVersion:' helm/Chart.yaml | sed 's/appVersion: *"*\([^"]*\)"*/\1/')
+      - name: Create version tag
+        id: create_tag
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ env.RELEASE_TAG }}
+          tag_prefix: ""
 
-          # Create timestamp tag (always for all releases)
-          RELEASE_TAG="$(date +%Y%m%d%H%M%S)-chart-v$VERSION"
-          echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-          echo "chart-version=$VERSION" >> $GITHUB_OUTPUT
-          echo "app-version=$APP_VERSION" >> $GITHUB_OUTPUT
-
-          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
-          git config --local user.name "${{ env.GIT_USER_NAME }}"
-          git tag "$RELEASE_TAG" && git push origin "$RELEASE_TAG" || echo "Release tag exists"
-
-          # Package Helm chart
-          helm package ./helm --version "$VERSION" --app-version "$APP_VERSION"
+      - name: Package Helm chart
+        id: package_chart
+        run: |
+          # Package Helm chart (app-version is read from Chart.yaml automatically)
+          helm package ./helm --version "${{ env.CHART_VERSION }}"
 
           # Find the actual chart package name (helm package creates name based on Chart.yaml)
           CHART_PACKAGE=$(ls *.tgz | head -1)
           echo "chart-package=$CHART_PACKAGE" >> $GITHUB_OUTPUT
           echo "📦 Created Helm chart package: $CHART_PACKAGE"
 
-          # Only create GitHub release for final releases (main branch)
-          if [[ "$RELEASE_TYPE" == "final" ]]; then
+      - name: Log release info
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "Creating GitHub release for final Helm release"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }}"
+            echo "✅ GitHub release: Will be created"
           else
-            echo "Feature release - Git tag created but no GitHub release"
+            echo "Feature branch release - tracking version progression"
+            echo "✅ Git tag: ${{ env.RELEASE_TAG }} (for GitVersion tracking)"
+            echo "⏭️ GitHub release: Skipped (feature branch)"
           fi
 
       - name: Create GitHub Release (Draft)
@@ -127,20 +136,20 @@ jobs:
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.create_tag.outputs.release-tag }}
-          name: "chart-v${{ steps.create_tag.outputs.chart-version }}"
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "chart-v${{ env.CHART_VERSION }}"
           body: |
-            ## Helm Chart Release v${{ steps.create_tag.outputs.chart-version }}
+            ## Helm Chart Release v${{ env.CHART_VERSION }}
 
-            **Chart Version**: ${{ steps.create_tag.outputs.chart-version }}
-            **App Version**: ${{ steps.create_tag.outputs.app-version }}
+            **Chart Version**: ${{ env.CHART_VERSION }}
 
             ```bash
             helm upgrade --install fairagro-middleware ./helm \
-              --set image.tag=${{ steps.create_tag.outputs.app-version }} \
               --set image.repository=${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
             ```
-          files: ${{ steps.create_tag.outputs.chart-package }}
+            
+            *(App version and image tag are defined in the Helm chart's Chart.yaml and values.yaml)*
+          files: ${{ steps.package_chart.outputs.chart-package }}
           draft: true
           make_latest: true
           generate_release_notes: true
@@ -151,19 +160,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Looking for draft release with tag: ${{ steps.create_tag.outputs.release-tag }}"
+          echo "🔍 Looking for draft release with tag: ${{ env.RELEASE_TAG }}"
 
           # Give GitHub API a moment to index the new release
           sleep 5
 
           # Try to get the release ID from the draft release we just created
-          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.create_tag.outputs.release-tag }} --jq '.id' 2>/dev/null); then
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
 
             # Search for the release by version in all releases
-            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.create_tag.outputs.release-tag }}") | .id')
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ env.RELEASE_TAG }}") | .id')
 
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
@@ -179,20 +188,16 @@ jobs:
             --field draft=false
           echo "🎉 Release finalized successfully"
 
-      - name: Push to DockerHub
-        if: always()
-        run: |
-          # Check if we should push based on release type
-          if [[ "$RELEASE_TYPE" != "final" && "$RELEASE_TYPE" != "feature" ]]; then
-            echo "⏭️ Skipping DockerHub push - not a final or feature release"
-            exit 0
-          fi
-          if [[ -n "${{ secrets.DOCKERHUB_USER }}" && -n "${{ secrets.DOCKERHUB_TOKEN }}" ]]; then
-            VERSION="${{ needs.calculate-version.outputs.version }}"
+      - name: Login to Docker Hub
+        if: github.ref_name == 'main'
+        uses: docker/login-action@v3
+        with:
+          registry: registry-1.docker.io
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
-            helm push "${{ env.IMAGE_NAME }}-$VERSION.tgz" oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
-            echo "✅ Pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:$VERSION"
-          else
-            echo "⚠️ Skipping DockerHub push - missing secrets"
-          fi
+      - name: Push Helm chart to DockerHub
+        if: github.ref_name == 'main'
+        run: |
+          helm push ${{ steps.package_chart.outputs.chart-package }} oci://registry-1.docker.io/${{ env.DOCKERHUB_NAMESPACE }}
+          echo "✅ Pushed to DockerHub: ${{ env.DOCKERHUB_NAMESPACE }}/${{ steps.package_chart.outputs.chart-package }}"
