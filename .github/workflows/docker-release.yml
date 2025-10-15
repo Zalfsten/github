@@ -294,11 +294,16 @@ jobs:
     permissions:
       contents: write
 
-    env:
-      TIMESTAMP: ${{ github.run_id }}${{ github.run_attempt }}
-      RELEASE_TAG: ${{ github.run_id }}${{ github.run_attempt }}-docker-v${{ needs.docker-build-test.outputs.version }}
-
     steps:
+      - name: Generate timestamp and release tag
+        id: timestamp
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          RELEASE_TAG="${TIMESTAMP}-docker-v${{ needs.docker-build-test.outputs.version }}"
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "release-tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "Generated timestamp: $TIMESTAMP"
+          echo "Release tag: $RELEASE_TAG"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -316,18 +321,18 @@ jobs:
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          custom_tag: ${{ env.RELEASE_TAG }}
+          custom_tag: ${{ steps.timestamp.outputs.release-tag }}
           tag_prefix: ""
 
       - name: Log release info
         run: |
           if [[ "${{ env.RELEASE_TYPE }}" == "final" ]]; then
             echo "Creating GitHub release for final release (main branch)"
-            echo "✅ Git tag: ${{ env.RELEASE_TAG }}"
+            echo "✅ Git tag: ${{ steps.timestamp.outputs.release-tag }}"
             echo "✅ GitHub release: Will be created"
           else
             echo "Feature branch release - tracking version progression"
-            echo "✅ Git tag: ${{ env.RELEASE_TAG }} (for GitVersion tracking)"
+            echo "✅ Git tag: ${{ steps.timestamp.outputs.release-tag }} (for GitVersion tracking)"
             echo "⏭️ GitHub release: Skipped (feature branch)"
             echo "💡 This tag helps GitVersion increment properly on subsequent builds"
           fi
@@ -337,7 +342,7 @@ jobs:
         id: draft_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ steps.timestamp.outputs.release-tag }}
           name: "docker-v${{ needs.docker-build-test.outputs.version }}"
           body: |
             ## Docker Release v${{ needs.docker-build-test.outputs.version }}
@@ -377,19 +382,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🔍 Looking for draft release with tag: ${{ env.RELEASE_TAG }}"
+          echo "🔍 Looking for draft release with tag: ${{ steps.timestamp.outputs.release-tag }}"
 
           # Give GitHub API a moment to index the new release
           sleep 5
 
           # Try to get the release ID from the draft release we just created
-          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }} --jq '.id' 2>/dev/null); then
+          if RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.timestamp.outputs.release-tag }} --jq '.id' 2>/dev/null); then
             echo "✅ Found release ID via tag: $RELEASE_ID"
           else
             echo "⚠️ Release not found via tag, searching in all releases..."
 
             # Search for the release by version in all releases
-            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ env.RELEASE_TAG }}") | .id')
+            RELEASE_ID=$(gh api repos/${{ github.repository }}/releases --jq '.[] | select(.tag_name == "${{ steps.timestamp.outputs.release-tag }}") | .id')
 
             if [[ -n "$RELEASE_ID" ]]; then
               echo "✅ Found release ID via search: $RELEASE_ID"
